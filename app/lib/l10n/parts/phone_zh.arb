@@ -154,6 +154,17 @@
   "phoneDndConnect": "连接",
   "phoneDndManualEntryHint": "通知里没有输入框时，用「手动填写」",
   "phoneDndXiaomiUsbHint": "打开「USB 调试（安全设置）」需插入 SIM 卡并登录小米账号。",
+  "phoneDndUseRoot": "Root",
+  "phoneDndUsingRoot": "正在使用：Root",
+  "phoneDndRootReady": "Root · 可以用了",
+  "phoneDndRootTitle": "Root",
+  "phoneDndRootGranted": "已授权 Root",
+  "phoneDndRootConnected": "特权引擎已连接",
+  "phoneDndRootGrant": "授权 Root",
+  "phoneDndRootGrantHint": "在 Root 管理器（KernelSU、Magisk、APatch）中允许 DSH Go，然后点按钮重新检测。",
+  "phoneDndRootAllSet": "已授权 Root，可在下方启用。",
+  "phoneDndRootPermissionFailed": "仍未授权 Root，请检查 Root 管理器。",
+  "phoneDndRootFootnote": "Root 路径无需 Shizuku 与无线调试。特权引擎以 Root 运行；仍需 Android 14 或更高版本。",
   "phoneDndEnable": "启用不打扰模式",
   "phoneDndEnterCodeTitle": "填写配对码",
   "phoneDndCodeLabel": "6 位配对码",
@@ -414,6 +425,14 @@
   },
   "phoneDndAdbStatus": "自连 ADB · {reason}",
   "@phoneDndAdbStatus": {
+    "placeholders": {
+      "reason": {
+        "type": "String"
+      }
+    }
+  },
+  "phoneDndRootStatus": "Root · {reason}",
+  "@phoneDndRootStatus": {
     "placeholders": {
       "reason": {
         "type": "String"

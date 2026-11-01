@@ -27,6 +27,8 @@ String dndSummary(PhoneBackgroundStatus bg) {
       bg.ready ? appL10n.phoneDndShizukuReady : appL10n.phoneDndShizukuStatus(bg.reason ?? appL10n.phoneNotReadyYet),
     PhoneBackgroundMode.adb =>
       bg.ready ? appL10n.phoneDndAdbReady : appL10n.phoneDndAdbStatus(bg.reason ?? appL10n.phoneNotReadyYet),
+    PhoneBackgroundMode.root =>
+      bg.ready ? appL10n.phoneDndRootReady : appL10n.phoneDndRootStatus(bg.reason ?? appL10n.phoneNotReadyYet),
   };
 }
 
@@ -148,7 +150,12 @@ class _PhoneDndPageState extends ConsumerState<PhoneDndPage> {
               ListPageRow(
                 icon: AppIcons.dndMode,
                 iconColor: Theme.of(context).colorScheme.primary,
-                title: bg.mode == PhoneBackgroundMode.shizuku ? l10n.phoneDndUsingShizuku : l10n.phoneDndUsingAdb,
+                title: switch (bg.mode) {
+                  PhoneBackgroundMode.shizuku => l10n.phoneDndUsingShizuku,
+                  PhoneBackgroundMode.adb => l10n.phoneDndUsingAdb,
+                  PhoneBackgroundMode.root => l10n.phoneDndUsingRoot,
+                  _ => l10n.phoneDndUsingShizuku,
+                },
                 subtitle: bg.ready ? l10n.phoneReady : (bg.reason ?? l10n.phoneNotReadyYet),
                 trailing: TextButton(
                   onPressed: _busy ? null : () => _setMode(PhoneBackgroundMode.off),
@@ -163,6 +170,7 @@ class _PhoneDndPageState extends ConsumerState<PhoneDndPage> {
             segments: [
               PillSegment(PhoneBackgroundMode.shizuku, l10n.phoneDndUseShizuku),
               PillSegment(PhoneBackgroundMode.adb, l10n.phoneDndDirectAdb),
+              PillSegment(PhoneBackgroundMode.root, l10n.phoneDndUseRoot),
             ],
             selected: view,
             onChanged: (mode) => setState(() {
@@ -172,7 +180,12 @@ class _PhoneDndPageState extends ConsumerState<PhoneDndPage> {
           ),
         ),
         if (_error case final error?) PhoneNote(tone: NoteTone.warn, text: error),
-        if (view == PhoneBackgroundMode.shizuku) ..._shizuku(bg, usable) else ..._adb(bg, usable),
+        if (view == PhoneBackgroundMode.shizuku)
+          ..._shizuku(bg, usable)
+        else if (view == PhoneBackgroundMode.adb)
+          ..._adb(bg, usable)
+        else
+          ..._root(bg, usable),
       ],
     );
   }
@@ -294,6 +307,40 @@ class _PhoneDndPageState extends ConsumerState<PhoneDndPage> {
       if (!inUse)
         _EnableButton(onPressed: usable && a.connected && !_busy ? () => _setMode(PhoneBackgroundMode.adb) : null),
       PageFootnote([context.l10n.phoneDndManualEntryHint, if (xiaomi) context.l10n.phoneDndXiaomiUsbHint].join('\n')),
+    ];
+  }
+
+  Future<void> _grantRoot() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    final ok = await _phone.requestRootPermission();
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (!ok) _toast(context.l10n.phoneDndRootPermissionFailed);
+  }
+
+  List<Widget> _root(PhoneBackgroundStatus bg, bool usable) {
+    final r = bg.root;
+    final inUse = bg.mode == PhoneBackgroundMode.root;
+    final Widget next = r.granted
+        ? _Next(text: context.l10n.phoneDndRootAllSet)
+        : _Next(
+            text: context.l10n.phoneDndRootGrantHint,
+            button: FilledButton(onPressed: _busy ? null : _grantRoot, child: Text(context.l10n.phoneDndRootGrant)),
+          );
+    return [
+      ListPageCard(
+        margin: _groupMargin,
+        title: context.l10n.phoneDndRootTitle,
+        children: [
+          CheckRow(label: context.l10n.phoneDndRootGranted, done: r.granted),
+          CheckRow(label: context.l10n.phoneDndRootConnected, done: r.connected),
+          next,
+        ],
+      ),
+      if (!inUse)
+        _EnableButton(onPressed: usable && r.granted && !_busy ? () => _setMode(PhoneBackgroundMode.root) : null),
+      PageFootnote(context.l10n.phoneDndRootFootnote),
     ];
   }
 }

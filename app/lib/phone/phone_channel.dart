@@ -37,11 +37,13 @@ String get phoneNotReadyReason => appL10n.statePhoneNotReady;
 enum PhoneBackgroundMode {
   off,
   shizuku,
-  adb;
+  adb,
+  root;
 
   static PhoneBackgroundMode parse(Object? wire) => switch (wire) {
     'shizuku' => shizuku,
     'adb' => adb,
+    'root' => root,
     _ => off,
   };
 }
@@ -87,6 +89,21 @@ class AdbStatus {
   final bool connected;
 }
 
+/// Root (su) state for 不打扰模式's root path. Absent from older native
+/// modules, which read as "not granted".
+class RootStatus {
+  const RootStatus({this.granted = false, this.connected = false});
+
+  factory RootStatus.fromMap(Map<Object?, Object?> m) =>
+      RootStatus(granted: _flag(m['granted']), connected: _flag(m['connected']));
+
+  /// The root manager (KernelSU, Magisk, APatch) allows DSH Go.
+  final bool granted;
+
+  /// The su-launched privileged engine answers.
+  final bool connected;
+}
+
 class PhoneBackgroundStatus {
   const PhoneBackgroundStatus({
     this.mode = PhoneBackgroundMode.off,
@@ -95,6 +112,7 @@ class PhoneBackgroundStatus {
     this.androidOk = false,
     this.shizuku = const ShizukuStatus(),
     this.adb = const AdbStatus(),
+    this.root = const RootStatus(),
   });
 
   factory PhoneBackgroundStatus.fromMap(Map<Object?, Object?> m) => PhoneBackgroundStatus(
@@ -104,6 +122,7 @@ class PhoneBackgroundStatus {
     androidOk: _flag(m['androidOk']),
     shizuku: ShizukuStatus.fromMap(_map(m['shizuku'])),
     adb: AdbStatus.fromMap(_map(m['adb'])),
+    root: RootStatus.fromMap(_map(m['root'])),
   );
 
   final PhoneBackgroundMode mode;
@@ -118,6 +137,7 @@ class PhoneBackgroundStatus {
   final bool androidOk;
   final ShizukuStatus shizuku;
   final AdbStatus adb;
+  final RootStatus root;
 }
 
 class PhoneTaskStatus {
@@ -802,6 +822,21 @@ class PhoneChannel {
   Future<PhoneResult> setBackgroundMode(PhoneBackgroundMode mode) => _result('setBackgroundMode', {'mode': mode.name});
 
   Future<bool> requestShizukuPermission() => _bool('requestShizukuPermission');
+
+  /// Re-asks the root manager; may pop its authorization dialog. Blocking.
+  Future<bool> requestRootPermission() => _bool('requestRootPermission');
+
+  /// One-shot su availability probe (`unavailable` / `unauthorized` / `granted`).
+  Future<String> rootProbe({bool force = false}) async {
+    try {
+      final map = await _methods.invokeMapMethod<Object?, Object?>('rootProbe', {'force': force});
+      return map?['state'] is String ? map!['state'] as String : 'unavailable';
+    } on MissingPluginException {
+      return 'unavailable';
+    } on PlatformException {
+      return 'unavailable';
+    }
+  }
 
   /// Posts the notification with a code field for 「使用配对码配对设备」.
   Future<PhoneResult> adbStartPairing() => _result('adbStartPairing');

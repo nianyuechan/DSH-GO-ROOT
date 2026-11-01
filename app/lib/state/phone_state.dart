@@ -206,6 +206,11 @@ class PhoneController extends Notifier<PhoneState> {
 
   Future<bool> requestShizukuPermission() => _thenRefresh(_channel.requestShizukuPermission());
 
+  Future<bool> requestRootPermission() => _thenRefresh(_channel.requestRootPermission());
+
+  /// One-shot su probe (`unavailable` / `unauthorized` / `granted`).
+  Future<String> rootProbe({bool force = false}) => _thenRefresh(_channel.rootProbe(force: force));
+
   Future<PhoneResult> adbStartPairing() => _thenRefresh(_channel.adbStartPairing());
 
   Future<PhoneResult> adbPair(String code, {int? port}) => _thenRefresh(_channel.adbPair(code, port: port));

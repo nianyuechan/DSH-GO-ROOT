@@ -2,6 +2,8 @@ package io.github.ccch1mneyyy.dsh_app.phone
 
 import io.github.ccch1mneyyy.dsh_app.i18n.AppStrings
 import io.github.ccch1mneyyy.dsh_app.R
+import io.github.ccch1mneyyy.dsh_app.root.RootAccess
+import io.github.ccch1mneyyy.dsh_app.root.RootState
 import android.content.Context
 import android.content.Intent
 import android.os.Handler
@@ -109,6 +111,11 @@ class PhonePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandle
             "testScreen" -> async(result) { control.testScreen() }
             "setBackgroundMode" -> async(result) { control.background.setBackgroundMode(call.argument<String>("mode") ?: "off") }
             "requestShizukuPermission" -> async(result) { control.background.requestShizukuPermission() }
+            "requestRootPermission" -> async(result) { control.background.requestRootPermission() }
+            "rootProbe" -> async(result) {
+                val state = RootAccess.probe(force = call.argument<Boolean>("force") == true)
+                mapOf("state" to state.name, "granted" to (state == RootState.granted))
+            }
             "adbStartPairing" -> async(result) { control.background.adbStartPairing() }
             "adbPair" -> async(result) {
                 val code = call.argument<String>("code")?.trim().orEmpty()
@@ -139,7 +146,7 @@ class PhonePlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandle
             "setOverlayPrefs" -> result.success(OverlayPrefs.write(appContext, call.arguments as? Map<*, *>).toMap())
             else -> result.notImplemented()
         }
-        if (call.method == "setBackgroundMode" || call.method == "adbConnect" || call.method == "requestShizukuPermission") {
+        if (call.method == "setBackgroundMode" || call.method == "adbConnect" || call.method == "requestShizukuPermission" || call.method == "requestRootPermission" || call.method == "rootProbe") {
             control.emitStatus()
         }
     }

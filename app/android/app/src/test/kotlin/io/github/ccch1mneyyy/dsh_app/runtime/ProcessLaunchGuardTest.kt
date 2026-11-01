@@ -110,7 +110,18 @@ class ProcessLaunchGuardTest {
     )
     private val cLanguages = setOf("c", "cc", "cpp", "cxx", "h", "hpp")
     private val nativeLanguages = cLanguages + setOf("kt", "java")
-    private val allowedNative = "app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/runtime/DshProcess.kt"
+
+    /**
+     * Reviewed launch sites. DshProcess owns the engine; RootStarter is the root twin
+     * of the adb path, and RootAccess probes su — both spawn through Java's
+     * ProcessBuilder, so the close-inherited-fds premise holds (their children run as
+     * a different uid, which makes the premise load-bearing rather than optional).
+     */
+    private val allowedNatives = setOf(
+        "app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/runtime/DshProcess.kt",
+        "app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/phone/background/RootStarter.kt",
+        "app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/root/RootAccess.kt",
+    )
     private val localHelper = "app/lib/remote/ssh/remote_shell.dart"
 
     private fun nativeCalls(source: String, language: String): List<Token> {
@@ -215,11 +226,11 @@ class ProcessLaunchGuardTest {
         val root = repository()
         val sourceFiles = files(File(root, "app/android")).filter { it.extension in nativeLanguages }
         assertTrue("The Android source tree must be present", sourceFiles.isNotEmpty())
-        assertTrue("The reviewed launcher must be present", File(root, allowedNative).isFile)
+        assertTrue("The reviewed launchers must be present", allowedNatives.all { File(root, it).isFile })
         val violations = sourceFiles.flatMap { file ->
             val path = file.relativeTo(root).invariantSeparatorsPath
             val source = file.readText()
-            nativeCalls(source, file.extension).filter { path != allowedNative }.map { location(path, source, it) }
+            nativeCalls(source, file.extension).filter { path !in allowedNatives }.map { location(path, source, it) }
         }
         assertEquals("New launch sites may inherit API 26 configuration fds; route through DshProcess.\n" +
             violations.joinToString("\n"), emptyList<String>(), violations)

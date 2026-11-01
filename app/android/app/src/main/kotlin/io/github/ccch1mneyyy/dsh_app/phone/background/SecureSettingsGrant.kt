@@ -11,6 +11,9 @@ object SecureSettingsGrant {
     // `a11yKeeper.path` in the `dsh/phone` status.
     const val GRANTED = "granted"
 
+    /** Root is granted: the tap connects and grants. */
+    const val ROOT = "root"
+
     /** Shizuku runs and has let us in: the tap grants. */
     const val SHIZUKU = "shizuku"
 
@@ -20,11 +23,12 @@ object SecureSettingsGrant {
     /** Shizuku runs but hasn't let us in: the tap asks it first, then grants. */
     const val SHIZUKU_PERMISSION = "shizukuPermission"
 
-    /** Neither is set up (不打扰模式's page sets up both). */
+    /** Neither is set up (不打扰模式's page sets up all three). */
     const val SETUP = "setup"
 
-    fun path(granted: Boolean, shizuku: ShizukuStatus, adb: AdbStatus): String = when {
+    fun path(granted: Boolean, root: RootStatus, shizuku: ShizukuStatus, adb: AdbStatus): String = when {
         granted -> GRANTED
+        root.granted -> ROOT
         shizuku.running && shizuku.granted -> SHIZUKU
         adb.paired && adb.wirelessDebugging != false -> ADB
         shizuku.running -> SHIZUKU_PERMISSION

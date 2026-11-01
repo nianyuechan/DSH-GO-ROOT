@@ -11,11 +11,11 @@ import java.util.concurrent.atomic.AtomicLong
 
 /**
  * The 不打扰模式 surface the core's `PhonePlugin` calls into: the `background` block of `status`,
- * and the actions behind `setBackgroundMode`, `requestShizukuPermission`, `adbStartPairing`,
- * `adbPair`, `adbConnect`. It owns the two starters (Shizuku / self-ADB — both user-selectable),
- * probes whether a trusted virtual display and input injection work here, and registers
- * [BackgroundDisplay] in [PhoneRegistry] only while a task runs. Method names match the
- * `dsh/phone` channel.
+ * and the actions behind `setBackgroundMode`, `requestShizukuPermission`, `requestRootPermission`,
+ * `adbStartPairing`, `adbPair`, `adbConnect`. It owns the three starters (Shizuku / self-ADB /
+ * root — all user-selectable), probes whether a trusted virtual display and input injection
+ * work here, and registers [BackgroundDisplay] in [PhoneRegistry] only while a task runs.
+ * Method names match the `dsh/phone` channel.
  */
 class BackgroundControl private constructor(context: Context) {
     private val app = context.applicationContext
@@ -24,8 +24,9 @@ class BackgroundControl private constructor(context: Context) {
 
     private val shizuku = ShizukuStarter(app) { notifyChanged() }
     private val adb = AdbStarter(app) { notifyChanged() }
+    private val root = RootStarter(app) { notifyChanged() }
 
-    @Volatile private var mode: String = "off"          // off | shizuku | adb
+    @Volatile private var mode: String = "off"          // off | shizuku | adb | root
     @Volatile private var channel: PrivilegedChannel? = null
     @Volatile private var driver: BackgroundDisplay? = null
     @Volatile private var driverTaskId: Long? = null
@@ -53,6 +54,7 @@ class BackgroundControl private constructor(context: Context) {
             "inject" to injectOk,
             "shizuku" to shizuku.status().map(),
             "adb" to adb.status().map(),
+            "root" to root.status().map(),
         )
     }
 
@@ -63,13 +65,15 @@ class BackgroundControl private constructor(context: Context) {
         !androidOk() -> AppStrings.get(app, R.string.background_requires_android)
         mode == "shizuku" -> shizuku.reason() ?: if (trustedDisplayOk == false) UNSUPPORTED else null
         mode == "adb" -> adb.reason() ?: if (trustedDisplayOk == false) UNSUPPORTED else null
+        mode == "root" -> root.reason() ?: if (trustedDisplayOk == false) UNSUPPORTED else null
         else -> AppStrings.get(app, R.string.background_unknown_mode)
     }
 
     // ---- actions -----------------------------------------------------------
 
     fun setBackgroundMode(newMode: String): Map<String, Any?> {
-        if (newMode !in setOf("off", "shizuku", "adb")) return mapOf("ok" to false, "reason" to AppStrings.get(app, R.string.background_unknown_mode))
+        android.util.Log.w("BGControl", "setBackgroundMode: $mode -> $newMode")
+        if (newMode !in setOf("off", "shizuku", "adb", "root")) return mapOf("ok" to false, "reason" to AppStrings.get(app, R.string.background_unknown_mode))
         if (newMode == "off") {
             endTask()
             disconnectAll()
@@ -85,6 +89,7 @@ class BackgroundControl private constructor(context: Context) {
             channel = null
             if (mode == "shizuku") shizuku.disconnect()
             else if (mode == "adb") adb.disconnect()
+            else if (mode == "root") root.disconnect()
             trustedDisplayOk = null
             injectOk = null
         }
@@ -97,6 +102,9 @@ class BackgroundControl private constructor(context: Context) {
     }
 
     fun requestShizukuPermission(): Boolean = shizuku.requestPermission()
+
+    /** Re-asks the root manager; blocking like the Shizuku request. True when granted. */
+    fun requestRootPermission(): Boolean = root.requestPermission()
 
     fun adbStartPairing(): Map<String, Any?> {
         if (!androidOk()) return mapOf("ok" to false, "reason" to AppStrings.get(app, R.string.background_requires_android))
@@ -122,7 +130,8 @@ class BackgroundControl private constructor(context: Context) {
 
     /** The one-tap way to the permission right now ([SecureSettingsGrant.path]). */
     fun grantPath(granted: Boolean): String =
-        if (granted) SecureSettingsGrant.GRANTED else SecureSettingsGrant.path(false, shizuku.status(), adb.status())
+        if (granted) SecureSettingsGrant.GRANTED
+        else SecureSettingsGrant.path(false, root.status(), shizuku.status(), adb.status())
 
     /**
      * Has the engine grant the permission over [via] (`shizuku` / `adb`): 不打扰模式's channel when it
@@ -134,6 +143,7 @@ class BackgroundControl private constructor(context: Context) {
         val ch = when {
             shared -> activeChannel()
             via == SecureSettingsGrant.SHIZUKU -> shizuku.connect()
+            via == SecureSettingsGrant.ROOT -> root.connect()
             else -> adb.connect()
         }
         val request = Bundle().apply {
@@ -141,7 +151,11 @@ class BackgroundControl private constructor(context: Context) {
             putInt(Proto.USER, Process.myUid() / PER_USER_RANGE)
         }
         val ok = ch != null && runCatching { ch.execute(request).getBoolean(Proto.OK) }.getOrDefault(false)
-        if (!shared) if (via == SecureSettingsGrant.SHIZUKU) shizuku.disconnect() else adb.disconnect()
+        if (!shared) when (via) {
+            SecureSettingsGrant.SHIZUKU -> shizuku.disconnect()
+            SecureSettingsGrant.ROOT -> root.disconnect()
+            else -> adb.disconnect()
+        }
         return ok
     }
 
@@ -211,6 +225,7 @@ class BackgroundControl private constructor(context: Context) {
         channel = when (mode) {
             "shizuku" -> shizuku.connect()
             "adb" -> adb.connect()
+            "root" -> root.connect()
             else -> null
         }
         return channel
@@ -220,14 +235,17 @@ class BackgroundControl private constructor(context: Context) {
         channel = null
         shizuku.disconnect()
         adb.disconnect()
+        root.disconnect()
     }
 
     private fun runGateProbe(): String? {
         val starterReason = when (mode) {
             "shizuku" -> shizuku.reason()
             "adb" -> adb.reason()
+            "root" -> root.reason()
             else -> AppStrings.get(app, R.string.background_off)
         }
+        android.util.Log.w("BGControl", "gate: mode=$mode starterReason=$starterReason")
         if (starterReason != null) return starterReason
         val ch = activeChannel() ?: return AppStrings.get(app, R.string.background_not_ready)
         val response = runCatching {

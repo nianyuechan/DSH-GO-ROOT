@@ -37,20 +37,32 @@ class PrivilegedDisplayService(context: Context) : IPrivilegedDisplay.Stub() {
  * the app can look up. One privileged engine, two transports.
  */
 object PrivilegedDisplayMain {
+    init {
+        android.util.Log.w("DshVDisplay", "class loaded")
+    }
+
     @JvmStatic
     @SuppressLint("PrivateApi")
     fun main(args: Array<String>) {
-        val context = systemContext()
-        val core = PrivilegedDisplayCore(context)
-        // A looper for framework callbacks (PendingIntent, UiAutomation handler thread parent).
+        android.util.Log.w("DshVDisplay", "main: entered uid=${Process.myUid()}")
+        // ActivityThread.<init> builds its H handler eagerly on this Android: the main
+        // looper must exist BEFORE systemMain(), unlike inside system_server's own entry.
         if (Looper.myLooper() == null) runCatching { Looper.prepareMainLooper() }
+        val minimal = args.isNotEmpty() && args[0] == "--minimal"
+        val context: Context? = if (minimal) null else systemContext()
+        android.util.Log.w("DshVDisplay", "main: systemContext ok minimal=$minimal")
+        val core = if (minimal) null else PrivilegedDisplayCore(context!!)
+        android.util.Log.w("DshVDisplay", "main: core constructed")
         System.err.println("DSH_VDISPLAY_READY uid=${Process.myUid()} rev=${Proto.REVISION}")
         System.err.flush()
-        val worker = Thread({ serve(core) }, "dsh-vdisplay")
+        android.util.Log.w("DshVDisplay", "main: serving")
+        val worker = Thread({
+            if (core != null) serve(core) else while (true) Thread.sleep(1000)
+        }, "dsh-vdisplay")
         worker.isDaemon = true
         worker.start()
         runCatching { Looper.loop() }
-        runCatching { core.handle(Bundle().apply { putString(Proto.OP, Proto.OP_DESTROY) }) }
+        runCatching { core?.handle(Bundle().apply { putString(Proto.OP, Proto.OP_DESTROY) }) }
     }
 
     private fun serve(core: PrivilegedDisplayCore) {
@@ -58,14 +70,19 @@ object PrivilegedDisplayMain {
         val output = System.out
         try {
             synchronized(output) { output.write(Frames.MAGIC); output.flush() }
+            android.util.Log.w("DshVDisplay", "serve: magic written, waiting for frames")
             while (true) {
-                val frame = Frames.read(input) ?: break
+                val frame = Frames.read(input) ?: run {
+                    android.util.Log.w("DshVDisplay", "serve: stdin EOF, exiting")
+                    break
+                }
                 val request = Bundles.unmarshal(frame)
                 val response = core.handle(request)
                 synchronized(output) { Frames.write(output, Bundles.marshal(response)) }
                 if (request.getString(Proto.OP) == Proto.OP_DESTROY) break
             }
-        } catch (_: Throwable) {
+        } catch (t: Throwable) {
+            android.util.Log.w("DshVDisplay", "serve: throwable ${t.javaClass.simpleName}: ${t.message}")
             // stream closed or malformed: fall through to exit
         } finally {
             runCatching { core.handle(Bundle().apply { putString(Proto.OP, Proto.OP_DESTROY) }) }

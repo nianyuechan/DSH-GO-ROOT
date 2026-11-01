@@ -62,7 +62,8 @@ import 'app_localizations_zh.dart';
 /// be consistent with the languages listed in the L10n.supportedLocales
 /// property.
 abstract class L10n {
-  L10n(String locale) : localeName = intl.Intl.canonicalizedLocale(locale.toString());
+  L10n(String locale)
+    : localeName = intl.Intl.canonicalizedLocale(locale.toString());
 
   final String localeName;
 
@@ -82,15 +83,19 @@ abstract class L10n {
   /// Additional delegates can be added by appending to this list in
   /// MaterialApp. This list does not have to be used at all if a custom list
   /// of delegates is preferred or required.
-  static const List<LocalizationsDelegate<dynamic>> localizationsDelegates = <LocalizationsDelegate<dynamic>>[
-    delegate,
-    GlobalMaterialLocalizations.delegate,
-    GlobalCupertinoLocalizations.delegate,
-    GlobalWidgetsLocalizations.delegate,
-  ];
+  static const List<LocalizationsDelegate<dynamic>> localizationsDelegates =
+      <LocalizationsDelegate<dynamic>>[
+        delegate,
+        GlobalMaterialLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+      ];
 
   /// A list of this localizations delegate's supported locales.
-  static const List<Locale> supportedLocales = <Locale>[Locale('en'), Locale('zh')];
+  static const List<Locale> supportedLocales = <Locale>[
+    Locale('en'),
+    Locale('zh'),
+  ];
 
   /// No description provided for @a11yRestoreTitle.
   ///
@@ -2676,7 +2681,11 @@ abstract class L10n {
   ///
   /// In zh, this message translates to:
   /// **'{title} {detail}，用时 {duration}'**
-  String activityTraceSpanSemantics(String title, String detail, String duration);
+  String activityTraceSpanSemantics(
+    String title,
+    String detail,
+    String duration,
+  );
 
   /// No description provided for @activityTraceGroupSemantics.
   ///
@@ -7176,7 +7185,13 @@ abstract class L10n {
   ///
   /// In zh, this message translates to:
   /// **'{title}\n{objective}\n{status} · 第 {rounds}/{max} 轮'**
-  String chatCommandGoalSummary(String title, String objective, String status, int rounds, int max);
+  String chatCommandGoalSummary(
+    String title,
+    String objective,
+    String status,
+    int rounds,
+    int max,
+  );
 
   /// No description provided for @chatCommandFailed.
   ///
@@ -11172,13 +11187,21 @@ abstract class L10n {
   ///
   /// In zh, this message translates to:
   /// **'每月 {days} 日且{weekdays}{months}'**
-  String featuresCronMonthDaysAndWeekdays(String days, String weekdays, String months);
+  String featuresCronMonthDaysAndWeekdays(
+    String days,
+    String weekdays,
+    String months,
+  );
 
   /// No description provided for @featuresCronMonthDaysOrWeekdays.
   ///
   /// In zh, this message translates to:
   /// **'每月 {days} 日或{weekdays}{months}'**
-  String featuresCronMonthDaysOrWeekdays(String days, String weekdays, String months);
+  String featuresCronMonthDaysOrWeekdays(
+    String days,
+    String weekdays,
+    String months,
+  );
 
   /// No description provided for @featuresCronHourRange.
   ///
@@ -12390,7 +12413,12 @@ abstract class L10n {
   ///
   /// In zh, this message translates to:
   /// **'更新 Agent 预设「{name}」（{id}）：在工作区写下这两个文件（内容原样），用 plugin_manager 先移除组合包 `{replacing}`，再用 install_bundle 安装 `{directory}` 目录。只做这些。\n\n'**
-  String featuresPresetUpdateRequest(String name, String id, String replacing, String directory);
+  String featuresPresetUpdateRequest(
+    String name,
+    String id,
+    String replacing,
+    String directory,
+  );
 
   /// No description provided for @featuresZoneThisPhone.
   ///
@@ -15668,6 +15696,72 @@ abstract class L10n {
   /// **'打开「USB 调试（安全设置）」需插入 SIM 卡并登录小米账号。'**
   String get phoneDndXiaomiUsbHint;
 
+  /// No description provided for @phoneDndUseRoot.
+  ///
+  /// In zh, this message translates to:
+  /// **'Root'**
+  String get phoneDndUseRoot;
+
+  /// No description provided for @phoneDndUsingRoot.
+  ///
+  /// In zh, this message translates to:
+  /// **'正在使用：Root'**
+  String get phoneDndUsingRoot;
+
+  /// No description provided for @phoneDndRootReady.
+  ///
+  /// In zh, this message translates to:
+  /// **'Root · 可以用了'**
+  String get phoneDndRootReady;
+
+  /// No description provided for @phoneDndRootTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'Root'**
+  String get phoneDndRootTitle;
+
+  /// No description provided for @phoneDndRootGranted.
+  ///
+  /// In zh, this message translates to:
+  /// **'已授权 Root'**
+  String get phoneDndRootGranted;
+
+  /// No description provided for @phoneDndRootConnected.
+  ///
+  /// In zh, this message translates to:
+  /// **'特权引擎已连接'**
+  String get phoneDndRootConnected;
+
+  /// No description provided for @phoneDndRootGrant.
+  ///
+  /// In zh, this message translates to:
+  /// **'授权 Root'**
+  String get phoneDndRootGrant;
+
+  /// No description provided for @phoneDndRootGrantHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'在 Root 管理器（KernelSU、Magisk、APatch）中允许 DSH Go，然后点按钮重新检测。'**
+  String get phoneDndRootGrantHint;
+
+  /// No description provided for @phoneDndRootAllSet.
+  ///
+  /// In zh, this message translates to:
+  /// **'已授权 Root，可在下方启用。'**
+  String get phoneDndRootAllSet;
+
+  /// No description provided for @phoneDndRootPermissionFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'仍未授权 Root，请检查 Root 管理器。'**
+  String get phoneDndRootPermissionFailed;
+
+  /// No description provided for @phoneDndRootFootnote.
+  ///
+  /// In zh, this message translates to:
+  /// **'Root 路径无需 Shizuku 与无线调试。特权引擎以 Root 运行；仍需 Android 14 或更高版本。'**
+  String get phoneDndRootFootnote;
+
   /// No description provided for @phoneDndEnable.
   ///
   /// In zh, this message translates to:
@@ -16867,6 +16961,12 @@ abstract class L10n {
   /// In zh, this message translates to:
   /// **'自连 ADB · {reason}'**
   String phoneDndAdbStatus(String reason);
+
+  /// No description provided for @phoneDndRootStatus.
+  ///
+  /// In zh, this message translates to:
+  /// **'Root · {reason}'**
+  String phoneDndRootStatus(String reason);
 
   /// No description provided for @phoneDndBrowserFailed.
   ///
@@ -19062,7 +19162,10 @@ abstract class L10n {
   ///
   /// In zh, this message translates to:
   /// **'需要 DSH {requiredVersion}，当前 {currentVersion}，未加载'**
-  String pluginsRequiresDshVersion(String requiredVersion, String currentVersion);
+  String pluginsRequiresDshVersion(
+    String requiredVersion,
+    String currentVersion,
+  );
 
   /// No description provided for @pluginsLoadFailure.
   ///
@@ -20994,7 +21097,12 @@ abstract class L10n {
   ///
   /// In zh, this message translates to:
   /// **'{mode}：{before} 已校正为 {after}，对比度至少 {minimum}:1'**
-  String plugViewContrastAdjusted(String mode, String before, String after, String minimum);
+  String plugViewContrastAdjusted(
+    String mode,
+    String before,
+    String after,
+    String minimum,
+  );
 
   /// No description provided for @plugViewRichLimit.
   ///
@@ -23346,7 +23454,11 @@ abstract class L10n {
   ///
   /// In zh, this message translates to:
   /// **'确认主机重装或更换后，可在主机设置中重置指纹。\n已记住：{saved}\n这次收到：{received}（{type}）'**
-  String remoteHostKeyMismatchDetail(String saved, String received, String type);
+  String remoteHostKeyMismatchDetail(
+    String saved,
+    String received,
+    String type,
+  );
 
   /// No description provided for @remoteForumCompactReplies.
   ///
@@ -28326,7 +28438,11 @@ abstract class L10n {
   ///
   /// In zh, this message translates to:
   /// **'换用{registry}下载（第 {attempt}/{attempts} 个源）'**
-  String statePluginRegistryProgress(String registry, int attempt, int attempts);
+  String statePluginRegistryProgress(
+    String registry,
+    int attempt,
+    int attempts,
+  );
 
   /// No description provided for @stateProviderServiceUnavailable.
   ///
@@ -31884,7 +32000,8 @@ class _L10nDelegate extends LocalizationsDelegate<L10n> {
   }
 
   @override
-  bool isSupported(Locale locale) => <String>['en', 'zh'].contains(locale.languageCode);
+  bool isSupported(Locale locale) =>
+      <String>['en', 'zh'].contains(locale.languageCode);
 
   @override
   bool shouldReload(_L10nDelegate old) => false;
