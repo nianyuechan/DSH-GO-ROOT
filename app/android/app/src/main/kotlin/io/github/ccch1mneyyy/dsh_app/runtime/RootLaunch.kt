@@ -1,6 +1,9 @@
 package io.github.ccch1mneyyy.dsh_app.runtime
 
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 
 /**
  * Root-chroot launch planner, the root twin of [DirectLaunch]: the engine runs in the
@@ -18,7 +21,14 @@ import java.io.File
  */
 object RootLaunch {
 
+    /** Fallback reason: a root launch already failed with this runtime. */
+    const val FAILED = "rootFailed"
+    /** The rootfs is missing a piece the chroot path needs (see [unavailable]). */
+    const val UNAVAILABLE = "rootUnavailable"
+
     data class Plan(val script: String, val cwd: File)
+
+    data class Selection(val root: Boolean, val fallbackReason: String? = null)
 
     /**
      * The saved launch method, mirroring [DirectLaunch.Preference]. [failedRuntime]
@@ -35,6 +45,98 @@ object RootLaunch {
         /** What the switch shows: whether the next normal start tries the chroot. */
         val enabled: Boolean get() = requested && !failed
     }
+
+    /**
+     * Chroot needs the rootfs's own setpriv/env and the dsh entry — none of the three is
+     * on the host. These come from the runtime build, so a runtime created before the
+     * root path existed cannot start. Pure file presence: no process is spawned.
+     */
+    fun unavailable(rootfs: File): String? = when {
+        !File(rootfs, "usr/bin/setpriv").canExecute() -> "rootSetprivMissing"
+        !File(rootfs, "usr/bin/env").canExecute() -> "rootEnvMissing"
+        !File(rootfs, "bin/sh").isFile -> "rootShellMissing"
+        !File(rootfs, "usr/local/bin/dsh").isFile -> "rootEntryMissing"
+        else -> null
+    }
+
+    /**
+     * Same contract as [DirectLaunch.select]: safe mode always wins, then the saved
+     * preference, then the last failure, then the rootfs check.
+     */
+    fun select(rootfs: File, requested: Boolean, safe: Boolean, failed: Boolean = false, granted: Boolean = false): Selection {
+        if (!requested || safe || !granted) return Selection(false)
+        if (failed) return Selection(false, FAILED)
+        val reason = unavailable(rootfs)
+        return Selection(reason == null, reason)
+    }
+
+    /**
+     * The app's supplementary groups, as `setpriv --groups` needs them. Android grants
+     * network access through a group (AID_INET 3003) rather than a permission, so a
+     * chrooted engine that drops this list has no sockets at all.
+     *
+     * `android.system.Os` has no getgroups; /proc/self/status reports the same list.
+     */
+    fun supplementaryGroups(statusFile: File = File("/proc/self/status")): IntArray {
+        val line = runCatching {
+            statusFile.useLines { lines -> lines.firstOrNull { it.startsWith("Groups:") } }
+        }.getOrNull() ?: return IntArray(0)
+        return line.removePrefix("Groups:").trim().split(Regex("\\s+"))
+            .mapNotNull { it.toIntOrNull() }.toIntArray()
+    }
+
+    /**
+     * Whether `su` works here, cached for this app session. This is the engine's own
+     * question — "can I mount and drop?" — and is deliberately separate from the phone
+     * control channel's [RootStarter] state: that one is torn down with 不打扰模式 and
+     * must not make an engine switch flicker when a task ends.
+     *
+     * A manager shows its authorization dialog on the first call, so this may block;
+     * callers are already on a worker thread and the read watchdog caps the wait.
+     */
+    fun granted(force: Boolean = false): Boolean {
+        if (!force) cachedGranted?.let { return it }
+        synchronized(this) {
+            if (!force) cachedGranted?.let { return it }
+            return probeSu().also { cachedGranted = it }
+        }
+    }
+
+    fun invalidate() {
+        cachedGranted = null
+    }
+
+    @Volatile private var cachedGranted: Boolean? = null
+
+    private fun probeSu(): Boolean {
+        val process = try {
+            ProcessBuilder("su", "-c", "id").start()
+        } catch (_: Exception) {
+            return false
+        }
+        val latch = CountDownLatch(1)
+        var lines: List<String> = emptyList()
+        val reader = thread(isDaemon = true, name = "dsh-root-probe") {
+            lines = try {
+                process.inputStream.bufferedReader().readLines().map { it.trim() }
+            } catch (_: Exception) {
+                emptyList()
+            }
+            latch.countDown()
+        }
+        val done = latch.await(PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        if (!done) {
+            // A refused or unanswered request must not wedge the caller.
+            process.destroy()
+            reader.join(2000)
+            return false
+        }
+        process.waitFor()
+        return lines.any { it.contains("uid=0") }
+    }
+
+    /** The manager's own wait is unbounded; this is the app's ceiling on it. */
+    private const val PROBE_TIMEOUT_SECONDS = 12L
 
     /**
      * Consumes the one fully expanded proot argv/env (same contract as
@@ -88,14 +190,27 @@ object RootLaunch {
             // and same-path expectations valid inside the chroot.
             appendLine("mkdir -p ${q("$rootPath$rootPath")}")
             appendLine("mount --bind ${q(rootPath)} ${q("$rootPath$rootPath")}")
-            append("exec chroot ${q(rootPath)} /usr/bin/setpriv --reuid=$appUid --regid=$appUid ")
-            if (appGids.isEmpty()) append("--clear-groups ")
-            else append("--groups=${appGids.joinToString(",")} ")
-            append("exec /usr/bin/env -i")
-            for ((key, value) in guest) { append(' '); append(q("$key=$value")) }
-            append(" /bin/sh -c ${q(argv.last())}")
-            appendLine()
+            // The script runs under the HOST's /system/bin/sh, and the rootfs's own tools
+            // are not reachable by their guest paths until we are inside it. So: one chroot
+            // with the host's Toybox chroot, then the rootfs's setpriv drops the uid and
+            // execs the engine. `chroot` needs root for the chroot(2) call alone; setpriv
+            // is what actually takes the engine off root.
+            val inner = "$SETPRIV --reuid=$appUid --regid=$appUid " +
+                (if (appGids.isEmpty()) "--clear-groups " else "--groups=${appGids.joinToString(",")} ") +
+                "$ENV -i " +
+                guest.entries.joinToString(" ") { (key, value) -> q("$key=$value") } +
+                " /bin/sh -c " + q(argv.last())
+            appendLine("exec $HOST_CHROOT ${q(rootPath)} /bin/sh -c ${q(inner)}")
         }
         return Plan(script, File(root, "root"))
     }
+
+    /**
+     * The host's chroot (Toybox) is the only one the launching shell can resolve; every
+     * path after it is the rootfs's own. These are Ubuntu 24.04's locations: util-linux
+     * puts setpriv and env in /usr/bin.
+     */
+    private const val HOST_CHROOT = "/system/bin/chroot"
+    private const val SETPRIV = "/usr/bin/setpriv"
+    private const val ENV = "/usr/bin/env"
 }

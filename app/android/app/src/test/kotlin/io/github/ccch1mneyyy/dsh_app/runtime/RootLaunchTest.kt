@@ -1,7 +1,9 @@
 package io.github.ccch1mneyyy.dsh_app.runtime
 
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -50,7 +52,10 @@ class RootLaunchTest {
         // guest env travels verbatim; the composed guest command runs through /bin/sh -c
         assertTrue(script.contains("'HOME=/root'"))
         assertTrue(script.contains("'DSH_GO_RUNTIME_ROOT=${rootfs.path}'"))
-        assertTrue(script.contains("/bin/sh -c 'echo \$\$ > /tmp/dsh-web.pid; exec /usr/local/bin/dsh web --no-open --host 127.0.0.1 --port 3080'"))
+        // The whole inner command is one quoted argument to the host's chroot, so each
+        // nested quote is shell-escaped ('\'' in the script text).
+        assertTrue(script.contains("/bin/sh -c '/usr/bin/setpriv --reuid=10245 --regid=10245 --groups=3003,3002,1015,1023 /usr/bin/env -i "))
+        assertTrue(script.contains(" /bin/sh -c '\\''echo \$\$ > /tmp/dsh-web.pid; exec /usr/local/bin/dsh web --no-open --host 127.0.0.1 --port 3080'\\'''"))
         assertEquals(File(rootfs, "root"), plan.cwd)
     }
 
@@ -114,5 +119,55 @@ class RootLaunchTest {
         } catch (expected: IllegalArgumentException) {
             assertTrue(expected.message!!.contains("unsupported guest command"))
         }
+    }
+
+    @Test
+    fun `the tools exec from the rootfs, never the host`() {
+        val plan = RootLaunch.prepare(rootfs, composedArgv(), appUid = 10245, appGids = gids)
+        // The host shell can only resolve the host's own chroot; everything after it is
+        // the rootfs's own paths, which exist only once we are inside.
+        assertTrue(plan.script.contains("exec /system/bin/chroot '${rootfs.path}' /bin/sh -c "))
+        assertTrue(plan.script.contains("/usr/bin/setpriv --reuid=10245 --regid=10245"))
+        // A bare `chroot` would resolve through the host's PATH, which is not what runs here.
+        assertFalse(Regex("exec chroot ").containsMatchIn(plan.script))
+        assertFalse("the host has no Ubuntu tool tree", plan.script.contains("${rootfs.path}/usr/bin/setpriv"))
+    }
+
+    @Test
+    fun `selection defers to safe mode, the saved choice and the last failure`() {
+        assertFalse(RootLaunch.select(rootfs, requested = false, safe = false, granted = true).root)
+        assertFalse("safe mode stays PRoot", RootLaunch.select(rootfs, requested = true, safe = true, granted = true).root)
+        assertFalse("no su, no chroot", RootLaunch.select(rootfs, requested = true, safe = false, granted = false).root)
+        val failed = RootLaunch.select(rootfs, requested = true, safe = false, failed = true, granted = true)
+        assertFalse(failed.root)
+        assertEquals(RootLaunch.FAILED, failed.fallbackReason)
+    }
+
+    @Test
+    fun `a runtime without the chroot tools falls back with a named reason`() {
+        val selection = RootLaunch.select(rootfs, requested = true, safe = false, granted = true)
+        assertFalse(selection.root)
+        // The test fixture is not a real rootfs, so the first missing tool names the reason.
+        assertEquals("rootSetprivMissing", selection.fallbackReason)
+        assertNotNull(RootLaunch.unavailable(rootfs))
+    }
+
+    @Test
+    fun `supplementary groups come from proc status`() {
+        val status = File.createTempFile("status", ".txt").apply {
+            writeText("Name:\tdsh_app\nGroups:\t3003 3002 1015 1023\n")
+            deleteOnExit()
+        }
+        // AID_INET (3003) is the one that lets the chrooted engine open sockets.
+        assertArrayEquals(intArrayOf(3003, 3002, 1015, 1023), RootLaunch.supplementaryGroups(status))
+    }
+
+    @Test
+    fun `a status file without groups yields an empty array`() {
+        val status = File.createTempFile("status", ".txt").apply {
+            writeText("Name:\tdsh_app\n")
+            deleteOnExit()
+        }
+        assertArrayEquals(IntArray(0), RootLaunch.supplementaryGroups(status))
     }
 }

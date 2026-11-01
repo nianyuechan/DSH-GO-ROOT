@@ -22,6 +22,7 @@ import '../shell/page_frame.dart';
 import '../theme/app_icons.dart';
 import 'settings_widgets.dart';
 import 'direct_engine_settings.dart';
+import 'root_engine_settings.dart';
 import '../common/brief_notice.dart';
 
 /// Self-service diagnostics: what the app knows about the runtime and the
@@ -150,6 +151,12 @@ class DiagnosticsPage extends ConsumerWidget {
         const DiagnosticsBundleNote(),
         const SizedBox(height: 24),
         const DirectEngineSettings(),
+        // Only where root launch can actually work: showing a dead switch on a
+        // stock phone is worse than not showing it.
+        if (status.rootEngineAvailable || status.rootEngineEnabled) ...[
+          const SizedBox(height: 24),
+          const RootEngineSettings(),
+        ],
       ],
     );
   }

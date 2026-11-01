@@ -60,6 +60,10 @@ class DshProcess(
     var direct: Boolean = false
         private set
 
+    /** Root mounted and dropped, then the engine runs in the real filesystem (see [RootLaunch]). */
+    var root: Boolean = false
+        private set
+
     val launchDiagnostics = LaunchDiagnostics()
     val executionMode: String? get() = launchDiagnostics.currentMode(process?.isAlive == true)
 
@@ -69,19 +73,32 @@ class DshProcess(
     /**
      * [binds] are extra proot `-b host:guest` mounts, inserted before the guest command.
      * [safe] boots the rescue profile instead of `web` (see [SafeMode.profileArg]).
+     * [rootEngine] tries the root-chroot launch first; [rootGranted] is the caller's su
+     * verdict, so an ungranted device never reaches [RootLaunch].
      */
-    fun start(guestEnv: Map<String, String>, binds: List<String> = emptyList(), safe: Boolean = false, phone: Boolean = false, directEngine: Boolean = false, directFailed: Boolean = false, onLaunchMethod: ((Boolean) -> Unit)? = null) {
+    fun start(guestEnv: Map<String, String>, binds: List<String> = emptyList(), safe: Boolean = false, phone: Boolean = false, directEngine: Boolean = false, directFailed: Boolean = false, rootEngine: Boolean = false, rootFailed: Boolean = false, rootGranted: Boolean = false, onLaunchMethod: ((Boolean) -> Unit)? = null) {
         check(process == null) { "already started" }
-        var selection = DirectLaunch.select(rootfs, directEngine, safe, directFailed)
+        // Root replaces the whole proot translation layer, so it outranks Direct: a chroot
+        // launch needs neither the loader workarounds nor the hard-link tidying.
+        val rootSelection = RootLaunch.select(rootfs, rootEngine, safe, rootFailed, rootGranted)
+        var selection = if (rootSelection.root) DirectLaunch.Selection(direct = false) else DirectLaunch.select(rootfs, directEngine, safe, directFailed)
         // Only PRoot's fake hard links stand in Direct's way: tidy them once no runtime process is left.
-        val tidy = selection.fallbackReason == DirectLaunch.INCOMPATIBLE
+        val tidy = !rootSelection.root && selection.fallbackReason == DirectLaunch.INCOMPATIBLE
         val cleanup = reapStrays(allowObservationGap = !selection.direct && !tidy)
         if (tidy && cleanup.complete) selection = tidyLinks(binds)
-        directFallbackReason = selection.fallbackReason ?: if (directEngine && safe) "safeRecovery" else null
-        launchDiagnostics.selected(selection.direct, directFallbackReason)
+        root = rootSelection.root
+        directFallbackReason = rootSelection.fallbackReason ?: selection.fallbackReason ?: if (directEngine && safe) "safeRecovery" else null
+        launchDiagnostics.selected(
+            when {
+                root -> LaunchDiagnostics.CHROOT
+                selection.direct -> LaunchDiagnostics.DIRECT
+                else -> LaunchDiagnostics.PROOT
+            },
+            directFallbackReason,
+        )
         direct = selection.direct
         check(cleanup.complete || (!direct && !cleanup.ownedRemaining)) { "runtime cleanup incomplete; stop the engine and retry" }
-        if (!cleanup.complete) listener.onLog("[dsh-app] starting proot with incomplete process observation; no captured runtime identities remain", "system")
+        if (!cleanup.complete) listener.onLog("[dsh-app] starting ${if (root) "chroot" else "proot"} with incomplete process observation; no captured runtime identities remain", "system")
         val pidFile = File(rootfs, "tmp/dsh-web.pid")
         pidFile.delete() // also removes a stale/dangling symlink; never reuse a previous run's PID
         check(!java.nio.file.Files.exists(pidFile.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) { "cannot remove stale runtime pid file" }
@@ -98,11 +115,14 @@ class DshProcess(
 
         val argv = ArrayList<String>()
         val sameBind = DirectLaunch.samePathBind(rootfs)
+        // RootLaunch consumes the same composed proot-shaped argv DirectLaunch does, so the
+        // `direct` flag only decides the same-path alias PRoot would have needed.
         val launchArgv = DirectLaunch.prootArguments(rootfs, manifest.launchArgv, direct)
         val allBinds = binds.filterNot { expand(it) == sameBind }.distinct()
         // PRoot's Node resolves through glibc, which fails A with a refused AAAA (#152): add Direct's resolver.
+        // Chroot runs the rootfs's own Node, so it gets neither the translation nor this workaround.
         val effectiveGuestEnv = guestEnv + ("DSH_GO_RUNTIME_ROOT" to rootfs.canonicalPath) +
-            listOfNotNull(if (direct) null else "NODE_OPTIONS" to DirectLaunch.prootNodeOptions(guestEnv["NODE_OPTIONS"]))
+            listOfNotNull(if (direct || root) null else "NODE_OPTIONS" to DirectLaunch.prootNodeOptions(guestEnv["NODE_OPTIONS"]))
         var guestEnvPlaced = false
         check(manifest.launchArgv.isNotEmpty()) { "runtime manifest has no launch.argv" }
         var bindsPlaced = false
@@ -155,18 +175,34 @@ class DshProcess(
             env.clear()
             env.putAll(plan.environment)
         }
+        if (root) {
+            // The planner validates the composed argv and turns it into a launcher script.
+            // su runs it; the script mounts, chroots and drops to this app's own uid, so
+            // every ownership/stop/cleanup path below keeps working unchanged.
+            val plan = RootLaunch.prepare(rootfs, argv, AndroidProcess.myUid(), RootLaunch.supplementaryGroups())
+            val script = File(context.filesDir, "root-launch.sh")
+            script.writeText(plan.script)
+            // The root manager's own chatter shares the stream; root commands never print it.
+            builder.command(listOf("su", "-c", "exec sh ${DirectLaunch.quote(script.absolutePath)}"))
+                .directory(context.filesDir)
+            env.clear()
+            env["PATH"] = "/system/bin:/system/xbin"
+        }
 
         readyReported = false
         if (directFallbackReason == DirectLaunch.INCOMPATIBLE) listener.onLog("[dsh-app] direct fallback: proot hard-link backing files need compatible launch; user preference and data retained", "system")
         if (directFallbackReason == DirectLaunch.FAILED) listener.onLog("[dsh-app] direct fallback: direct launch failed before with this runtime; turn Direct on again to retry", "system")
-        listener.onLog("[dsh-app] launch method: ${if (direct) "direct-glibc" else "proot"}${if (directEngine && safe) " (safe recovery)" else ""}", "system")
+        if (directFallbackReason == RootLaunch.FAILED) listener.onLog("[dsh-app] root fallback: the chroot launch failed before with this runtime; turn Root on again to retry", "system")
+        if (directFallbackReason == RootLaunch.UNAVAILABLE) listener.onLog("[dsh-app] root fallback: this runtime is missing the chroot tools or the dsh entry", "system")
+        listener.onLog("[dsh-app] launch method: ${when { root -> "root-chroot"; direct -> "direct-glibc"; else -> "proot" }}${if (directEngine && safe) " (safe recovery)" else ""}", "system")
         listener.onLog("[dsh-app] launching ${builder.command().joinToString(" ") { redact(it) }}", "system")
         // stop() came in while this was being prepared: don't launch at all.
         if (stopping) {
             listener.onExit(this, 0, true)
             return
         }
-        onLaunchMethod?.invoke(direct)
+        // Chroot exposes the same real paths Direct does, so the agents text follows it too.
+        onLaunchMethod?.invoke(direct || root)
         val p = builder.start()
         process = p
         launchDiagnostics.spawned()
@@ -252,9 +288,11 @@ class DshProcess(
         stopper = thread(name = "dsh-stop", isDaemon = true) {
             try {
                 val node = if (p.isAlive) guestRecord() else null
-                val proot = if (direct) null else node?.let { child -> processSnapshot().records.firstOrNull { it.pid == child.parent && it.proot } }
+                // Root has no proot parent to SIGQUIT: the chrooted node is the whole tree,
+                // and the su client is a plain child that closes on stdin EOF.
+                val proot = if (direct || root) null else node?.let { child -> processSnapshot().records.firstOrNull { it.pid == child.parent && it.proot } }
                 if (node != null) signalOwned(node, OsConstants.SIGTERM)
-                else if (direct && p.isAlive) p.destroy() // loader/preload may fail before writing its pid file
+                else if ((direct || root) && p.isAlive) p.destroy() // loader/preload may fail before writing its pid file
                 if (!waitExit(p, 5000) && proot != null) signalOwned(proot, OsConstants.SIGQUIT)
                 waitExit(p, 2000)
             } finally {

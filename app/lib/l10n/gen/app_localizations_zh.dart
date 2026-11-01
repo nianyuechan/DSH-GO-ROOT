@@ -9747,6 +9747,37 @@ class L10nZh extends L10n {
   String get phoneDirectLaunchFailed => '直接启动未成功';
 
   @override
+  String get phoneRootEngine => 'Root chroot 启动';
+
+  @override
+  String get phoneRootHint =>
+      '让本机引擎跑在真实文件系统里，不再经 PRoot 翻译层，文件访问更快。需要 root（Magisk、KernelSU 或 APatch），下次启动生效。引擎本身始终不以 root 运行：root 只负责挂载，随后降权到 App 自己的用户。';
+
+  @override
+  String get phoneRootUnavailableHint => '这台设备或这个运行环境暂时无法使用 root 启动。请确认 DSH Go 已获得 root 授权，且运行环境已安装。';
+
+  @override
+  String get phoneRootFailedHint => '这台设备上 root 启动没有成功，引擎已退回 PRoot。停止引擎后打开可再试一次。';
+
+  @override
+  String get phoneRootSafeHint => '安全模式始终使用 PRoot；恢复正常模式后应用此选项。';
+
+  @override
+  String get phoneRootChangeFailed => '未能切换启动方式，请停止本机引擎后重试。';
+
+  @override
+  String get phoneRootSetprivMissing => '运行环境缺少 setpriv';
+
+  @override
+  String get phoneRootEnvMissing => '运行环境缺少 env';
+
+  @override
+  String get phoneRootShellMissing => '运行环境缺少 shell';
+
+  @override
+  String get phoneRootEntryMissing => '运行环境缺少 dsh 入口';
+
+  @override
   String get phoneLaunchStartFailed => '未能完成启动';
 
   @override

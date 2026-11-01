@@ -142,6 +142,10 @@ class RuntimeController private constructor(private val app: Context) : DshProce
         "directEngineAvailable" to directEngineAvailable(),
         "directEngineActive" to (process?.executionMode == "direct"),
         "directEngineFallbackReason" to lastLaunch?.fallbackReason,
+        "rootEngineEnabled" to rootEngine().enabled,
+        "rootEngineAvailable" to rootEngineAvailable(),
+        "rootEngineActive" to (process?.executionMode == "chroot"),
+        "rootEngineFallbackReason" to lastLaunch?.fallbackReason?.takeIf { it == RootLaunch.FAILED || it == RootLaunch.UNAVAILABLE },
         "currentExecutionMode" to process?.executionMode,
         "launchSelectedMode" to lastLaunch?.selectedMode,
         "launchSpawned" to (lastLaunch?.spawned == true),
@@ -158,6 +162,34 @@ class RuntimeController private constructor(private val app: Context) : DshProce
     private fun directEngineAvailable(): Boolean = runCatching {
         manifest.raw.optJSONObject("directEngine")?.optInt("schema") == 2
     }.getOrDefault(false)
+
+    private fun rootEngine() = RootLaunch.Preference(
+        saved = if (prefs.contains(K_ROOT_ENGINE)) prefs.getBoolean(K_ROOT_ENGINE, false) else null,
+        available = rootEngineAvailable(),
+        failedRuntime = prefs.getString(K_ROOT_FAILED, null),
+        runtime = runCatching { manifest.runtimeVersion }.getOrNull(),
+    )
+
+    /**
+     * su plus a rootfs that carries the chroot tools. Probing su can pop the root
+     * manager's dialog, so the cached verdict is used unless nothing is known yet:
+     * the engine status is polled and must not turn every read into an su call.
+     */
+    private fun rootEngineAvailable(): Boolean = runCatching {
+        RootLaunch.unavailable(installer.rootfs) == null && RootLaunch.granted()
+    }.getOrDefault(false)
+
+    /**
+     * Root is a strict addition to Direct: the two answer the same question, so enabling
+     * one clears the other's saved choice and failed-runtime pin. Both stay off in safe mode.
+     */
+    @Synchronized fun setRootEngine(enabled: Boolean) {
+        check(process == null && phase !in setOf(Phase.STARTING, Phase.RUNNING, Phase.STOPPING, Phase.INSTALLING) && !resetting) { "stop the engine before changing its launch method" }
+        check(!enabled || rootEngineAvailable()) { "root launch is unavailable: su or the chroot tools are missing" }
+        prefs.edit().putBoolean(K_ROOT_ENGINE, enabled).remove(K_ROOT_FAILED)
+            .putBoolean(K_DIRECT_ENGINE, false).remove(K_DIRECT_FAILED).apply()
+        emitStatus()
+    }
 
     /**
      * An App-local option, on by default; a running process never changes its execution world.
@@ -349,7 +381,9 @@ class RuntimeController private constructor(private val app: Context) : DshProce
                 process = p
                 timeline.spawned()
                 val direct = directEngine()
-                p.start(env, if (storage) PhoneStorage.binds() else emptyList(), safe, phone, direct.requested, direct.failed) { actualDirect ->
+                val root = rootEngine()
+                p.start(env, if (storage) PhoneStorage.binds() else emptyList(), safe, phone, direct.requested, direct.failed,
+                    rootEngine = root.requested, rootFailed = root.failed, rootGranted = root.requested && RootLaunch.granted()) { actualDirect ->
                     GuestSetup.writeAgentsMd(installer.rootfs, storage, phone, pendingVisualReplies, actualDirect)
                 }
                 if (phone) PhoneControl.get(app).launched(p.phoneMounted)
@@ -769,13 +803,23 @@ class RuntimeController private constructor(private val app: Context) : DshProce
                 return
             }
             val tail = synchronized(runTail) { runTail.toList() }
-            var f = CrashClassifier.classify(code, readyAt, SystemClock.elapsedRealtime(), System.currentTimeMillis(), tail, runSafe, source.direct)
+            var f = CrashClassifier.classify(code, readyAt, SystemClock.elapsedRealtime(), System.currentTimeMillis(), tail, runSafe, source.direct, source.root)
             if (SafePolicy.directLaunchFailed(f, source.direct)) {
                 // Direct can't launch on this device: PRoot from now on with this runtime, no failure card,
                 // no strike. A new runtime, or the user turning Direct on again, gives it another try.
                 prefs.edit().putString(K_DIRECT_FAILED, manifest.runtimeVersion).apply()
                 log("[dsh-app] direct launch failed (${f.summary}); starting again with compatible launch", "system")
                 restartNow("with compatible launch")
+                return
+            }
+            if (SafePolicy.rootLaunchFailed(f, source.root)) {
+                // chroot didn't come up here (missing tool, a refused mount, a su that vanished):
+                // same pin as Direct — PRoot from now on until the runtime changes or Root is
+                // turned on again. su itself is re-probed, so a revoked grant also lands here.
+                RootLaunch.invalidate()
+                prefs.edit().putString(K_ROOT_FAILED, manifest.runtimeVersion).apply()
+                log("[dsh-app] root chroot launch failed (${f.summary}); starting again with PRoot", "system")
+                restartNow("with PRoot")
                 return
             }
             if (!runSafe) f = f.copy(recent = recentChanges())
@@ -865,6 +909,9 @@ class RuntimeController private constructor(private val app: Context) : DshProce
         private const val K_DIRECT_ENGINE = "directEngine"
         /** Runtime version Direct failed to launch with (see [SafePolicy.directLaunchFailed]). */
         private const val K_DIRECT_FAILED = "directEngineFailedRuntime"
+        private const val K_ROOT_ENGINE = "rootEngine"
+        /** Runtime version the chroot launch failed with (see [RootLaunch.FAILED]). */
+        private const val K_ROOT_FAILED = "rootEngineFailedRuntime"
         private const val MAIN_FAILURE_LOG = "failure-normal.log"
         private const val LATEST_FAILURE_LOG = "failure-latest.log"
 

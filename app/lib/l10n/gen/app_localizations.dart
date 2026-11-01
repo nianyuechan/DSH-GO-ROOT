@@ -17972,6 +17972,66 @@ abstract class L10n {
   /// **'直接启动未成功'**
   String get phoneDirectLaunchFailed;
 
+  /// No description provided for @phoneRootEngine.
+  ///
+  /// In zh, this message translates to:
+  /// **'Root chroot 启动'**
+  String get phoneRootEngine;
+
+  /// No description provided for @phoneRootHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'让本机引擎跑在真实文件系统里，不再经 PRoot 翻译层，文件访问更快。需要 root（Magisk、KernelSU 或 APatch），下次启动生效。引擎本身始终不以 root 运行：root 只负责挂载，随后降权到 App 自己的用户。'**
+  String get phoneRootHint;
+
+  /// No description provided for @phoneRootUnavailableHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'这台设备或这个运行环境暂时无法使用 root 启动。请确认 DSH Go 已获得 root 授权，且运行环境已安装。'**
+  String get phoneRootUnavailableHint;
+
+  /// No description provided for @phoneRootFailedHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'这台设备上 root 启动没有成功，引擎已退回 PRoot。停止引擎后打开可再试一次。'**
+  String get phoneRootFailedHint;
+
+  /// No description provided for @phoneRootSafeHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'安全模式始终使用 PRoot；恢复正常模式后应用此选项。'**
+  String get phoneRootSafeHint;
+
+  /// No description provided for @phoneRootChangeFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'未能切换启动方式，请停止本机引擎后重试。'**
+  String get phoneRootChangeFailed;
+
+  /// No description provided for @phoneRootSetprivMissing.
+  ///
+  /// In zh, this message translates to:
+  /// **'运行环境缺少 setpriv'**
+  String get phoneRootSetprivMissing;
+
+  /// No description provided for @phoneRootEnvMissing.
+  ///
+  /// In zh, this message translates to:
+  /// **'运行环境缺少 env'**
+  String get phoneRootEnvMissing;
+
+  /// No description provided for @phoneRootShellMissing.
+  ///
+  /// In zh, this message translates to:
+  /// **'运行环境缺少 shell'**
+  String get phoneRootShellMissing;
+
+  /// No description provided for @phoneRootEntryMissing.
+  ///
+  /// In zh, this message translates to:
+  /// **'运行环境缺少 dsh 入口'**
+  String get phoneRootEntryMissing;
+
   /// No description provided for @phoneLaunchStartFailed.
   ///
   /// In zh, this message translates to:

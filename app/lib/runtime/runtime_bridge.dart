@@ -166,6 +166,10 @@ class RuntimeStatus {
     this.directEngineAvailable = false,
     this.directEngineActive = false,
     this.directEngineFallbackReason,
+    this.rootEngineEnabled = false,
+    this.rootEngineAvailable = false,
+    this.rootEngineActive = false,
+    this.rootEngineFallbackReason,
     this.currentExecutionMode,
     this.launchSelectedMode,
     this.launchSpawned = false,
@@ -224,6 +228,13 @@ class RuntimeStatus {
   final bool directEngineActive;
   final String? directEngineFallbackReason;
 
+  /// Root-chroot launch (see `RootLaunch.kt`). Available only with su plus a rootfs
+  /// that carries the chroot tools; it outranks Direct when both could apply.
+  final bool rootEngineEnabled;
+  final bool rootEngineAvailable;
+  final bool rootEngineActive;
+  final String? rootEngineFallbackReason;
+
   /// Native process observation, never inferred from the saved direct preference.
   final String? currentExecutionMode;
 
@@ -241,6 +252,10 @@ class RuntimeStatus {
     'directEngineAvailable': directEngineAvailable,
     'directEngineActive': directEngineActive,
     'directEngineFallbackReason': directEngineFallbackReason,
+    'rootEngineEnabled': rootEngineEnabled,
+    'rootEngineAvailable': rootEngineAvailable,
+    'rootEngineActive': rootEngineActive,
+    'rootEngineFallbackReason': rootEngineFallbackReason,
     'currentExecutionMode': currentExecutionMode,
     'launchSelectedMode': launchSelectedMode,
     'launchSpawned': launchSpawned,
@@ -293,6 +308,10 @@ class RuntimeStatus {
     directEngineAvailable: map['directEngineAvailable'] == true,
     directEngineActive: map['directEngineActive'] == true,
     directEngineFallbackReason: map['directEngineFallbackReason'] as String?,
+    rootEngineEnabled: map['rootEngineEnabled'] == true,
+    rootEngineAvailable: map['rootEngineAvailable'] == true,
+    rootEngineActive: map['rootEngineActive'] == true,
+    rootEngineFallbackReason: map['rootEngineFallbackReason'] as String?,
     currentExecutionMode: map['currentExecutionMode'] as String?,
     launchSelectedMode: map['launchSelectedMode'] as String?,
     launchSpawned: map['launchSpawned'] == true,
@@ -608,6 +627,8 @@ class RuntimeBridge {
 
   /// Takes effect on the next start; native code rejects changes while active.
   Future<void> setDirectEngine(bool enabled) => _methods.invokeMethod<void>('setDirectEngine', {'enabled': enabled});
+
+  Future<void> setRootEngine(bool enabled) => _methods.invokeMethod<void>('setRootEngine', {'enabled': enabled});
 
   /// Output around the last failure, tokens masked.
   Future<List<String>> failureLog() async => (await _methods.invokeListMethod<String>('failureLog')) ?? const [];

@@ -11,12 +11,22 @@ class LaunchDiagnostics {
     @Volatile var failureReason: String? = null
         private set
 
-    fun selected(direct: Boolean, fallback: String?) {
-        selectedMode = if (direct) "direct" else "proot"
+    fun selected(direct: Boolean, fallback: String?) = selected(if (direct) DIRECT else PROOT, fallback)
+
+    /** [mode] is one of [PROOT], [DIRECT] or [CHROOT]. */
+    fun selected(mode: String, fallback: String?) {
+        selectedMode = mode
         fallbackReason = fallback
     }
 
     fun spawned() { spawned = true }
     fun failed(reason: String) { failureReason = reason }
     fun currentMode(alive: Boolean): String? = if (spawned && alive) selectedMode else null
+
+    companion object {
+        const val PROOT = "proot"
+        const val DIRECT = "direct"
+        /** Root mounts and drops, then the engine runs in the real filesystem (see [RootLaunch]). */
+        const val CHROOT = "chroot"
+    }
 }

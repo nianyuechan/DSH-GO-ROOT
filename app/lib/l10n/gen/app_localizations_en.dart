@@ -10261,6 +10261,39 @@ class L10nEn extends L10n {
   String get phoneDirectLaunchFailed => 'Direct launch failed';
 
   @override
+  String get phoneRootEngine => 'Root chroot launch';
+
+  @override
+  String get phoneRootHint =>
+      'Runs the local engine in the real filesystem instead of through PRoot, so file access skips the translation layer. Needs root (Magisk, KernelSU or APatch) and applies on the next start. The engine itself never runs as root: root only mounts and drops to this app\'s own user.';
+
+  @override
+  String get phoneRootUnavailableHint =>
+      'This device or runtime can\'t do a root launch right now. Check that root is granted to DSH Go and that the runtime is installed.';
+
+  @override
+  String get phoneRootFailedHint =>
+      'Root launch didn\'t work here, so the engine went back to PRoot. Stop the engine and turn this on to try again.';
+
+  @override
+  String get phoneRootSafeHint => 'Safe mode always uses PRoot. This choice applies when you return to normal mode.';
+
+  @override
+  String get phoneRootChangeFailed => 'Could not change the launch method. Stop the local engine and try again.';
+
+  @override
+  String get phoneRootSetprivMissing => 'The runtime is missing setpriv';
+
+  @override
+  String get phoneRootEnvMissing => 'The runtime is missing env';
+
+  @override
+  String get phoneRootShellMissing => 'The runtime is missing a shell';
+
+  @override
+  String get phoneRootEntryMissing => 'The runtime is missing the dsh entry';
+
+  @override
   String get phoneLaunchStartFailed => 'Didn\'t finish starting';
 
   @override

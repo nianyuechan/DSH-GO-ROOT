@@ -79,6 +79,10 @@ object SafePolicy {
     fun directLaunchFailed(failure: RunFailure, direct: Boolean): Boolean =
         direct && failure.kind == FailureKind.LAUNCH_FAILED
 
+    /** Same rule for the root-chroot path: one failed launch pins the fallback to PRoot. */
+    fun rootLaunchFailed(failure: RunFailure, root: Boolean): Boolean =
+        root && failure.kind == FailureKind.LAUNCH_FAILED
+
     const val REASON_MANUAL = "manual"
     const val REASON_AUTO = "auto"
     const val REASON_PROBATION = "probation"

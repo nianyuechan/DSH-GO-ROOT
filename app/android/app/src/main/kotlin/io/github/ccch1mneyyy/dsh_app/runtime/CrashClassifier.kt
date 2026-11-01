@@ -98,6 +98,18 @@ object CrashClassifier {
         Regex("^DshDirectModuleIdentityError: this file needs compatible launch; stop the engine and turn off Direct engine$"),
     )
     /**
+     * The chroot path fails before node starts, in the host shell. These name the mount or
+     * the chroot call itself, so they cannot be mistaken for a plugin's error message.
+     */
+    private val ROOT_FAILED = listOf(
+        Regex("^(?:/system/bin/)?sh: (?:[0-9]+: )?(?:su|exec): .*(?:Permission denied|not found).*$"),
+        Regex("^.*/usr/(?:s)bin/chroot: (?:failed to run command|cannot change root directory|No such file or directory).*$"),
+        Regex("^.*/usr/bin/setpriv: .+$"),
+        Regex("^mount: .*(?:Permission denied|No such file or directory|Invalid argument|Read-only file system).*$"),
+        Regex("^umount: .*$"),
+        Regex("^su: .*(?:permission denied|not allowed).*$", RegexOption.IGNORE_CASE),
+    )
+    /**
      * 128 + SIGSYS: Android's seccomp filter killed the direct loader or node for a
      * syscall it forbids (glibc's `access` on x86_64). The kill prints nothing.
      */
@@ -127,13 +139,16 @@ object CrashClassifier {
         tail: List<String>,
         safeMode: Boolean,
         directEngine: Boolean = false,
+        rootEngine: Boolean = false,
     ): RunFailure {
         // V8 running out of heap while starting or just after counts like a DSH fatal (#75);
         // later it stays KILLED, which restarts. Neither names a culprit plugin.
         val early = exitCode != 0 && (readyAt == null || now - readyAt <= EARLY_WINDOW_MS)
         val fatal = tail.firstOrNull(::isFatal) ?: tail.firstOrNull { HEAP_OOM.matches(it) }?.takeIf { early }
         val launch = if (readyAt == null && exitCode != 0) tail.firstOrNull {
-            EXEC_FAILED.matches(it) || (directEngine && DIRECT_FAILED.any { pattern -> pattern.matches(it) })
+            EXEC_FAILED.matches(it) ||
+                (directEngine && DIRECT_FAILED.any { pattern -> pattern.matches(it) }) ||
+                (rootEngine && ROOT_FAILED.any { pattern -> pattern.matches(it) })
         } ?: (if (directEngine && exitCode == SIGSYS_EXIT) SECCOMP_KILLED else null) else null
         val kind = when {
             tail.any { NO_SPACE.containsMatchIn(it) } -> FailureKind.NO_SPACE
