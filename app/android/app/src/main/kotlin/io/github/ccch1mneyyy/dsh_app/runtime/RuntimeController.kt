@@ -180,6 +180,54 @@ class RuntimeController private constructor(private val app: Context) : DshProce
     }.getOrDefault(false)
 
     /**
+     * Try to take over the engine the previous app process left running. Returns the
+     * process on success, null when the caller should spawn a fresh one.
+     *
+     * Every rejection clears the record: a handoff that no longer describes a live
+     * engine must not be retried on the next start either.
+     */
+    private fun tryAdopt(p: DshProcess): DshProcess? {
+        val record = EngineHandoff.load(app.filesDir) ?: return null
+        val root = installer.rootfs.canonicalPath
+        val result = AdoptedEngine.check(
+            record = record,
+            rootfs = installer.rootfs,
+            myUid = android.os.Process.myUid(),
+            liveness = ::liveness,
+            health = AdoptedEngine.httpHealthCheck(),
+        )
+        if (!result.adopted) {
+            EngineHandoff.clear(app.filesDir)
+            log("[dsh-app] not adopting the previous engine (${result.reason}); starting fresh", "system")
+            return null
+        }
+        return try {
+            p.adopt(record)
+            log("[dsh-app] adopted the previous engine on port ${record.port}", "system")
+            p
+        } catch (e: Exception) {
+            EngineHandoff.clear(app.filesDir)
+            log("[dsh-app] adoption failed (${e.javaClass.simpleName}); starting fresh", "system")
+            null
+        }
+    }
+
+    /** What /proc says about one pid, without ever guessing when it cannot be read. */
+    private fun liveness(pid: Int): AdoptedEngine.Liveness {
+        val dir = File("/proc/$pid")
+        if (!dir.exists()) return AdoptedEngine.Liveness.Absent
+        return try {
+            val uid = android.system.Os.stat("/proc/$pid").st_uid
+            val command = File("/proc/$pid/cmdline").readText().replace('\u0000', ' ').trim()
+            val cwd = android.system.Os.readlink("/proc/$pid/cwd")
+            AdoptedEngine.Liveness.Alive(uid, command, cwd)
+        } catch (_: Exception) {
+            AdoptedEngine.Liveness.Unknown
+        }
+    }
+
+
+    /**
      * Root is a strict addition to Direct: the two answer the same question, so enabling
      * one clears the other's saved choice and failed-runtime pin. Both stay off in safe mode.
      */
@@ -382,6 +430,15 @@ class RuntimeController private constructor(private val app: Context) : DshProce
                 timeline.spawned()
                 val direct = directEngine()
                 val root = rootEngine()
+                // Adoption comes before any spawn: if the previous engine is still running
+                // and answers with the recorded token, taking it over is both faster and
+                // the only way the user keeps a live conversation across an app restart.
+                // Only the root path leaves a detached engine behind (setsid).
+                val adopted = if (!safe && root.requested && RootLaunch.granted()) tryAdopt(p) else null
+                if (adopted != null) {
+                    if (phone) PhoneControl.get(app).launched(p.phoneMounted)
+                    return@execute
+                }
                 p.start(env, if (storage) PhoneStorage.binds() else emptyList(), safe, phone, direct.requested, direct.failed,
                     rootEngine = root.requested, rootFailed = root.failed, rootGranted = root.requested && RootLaunch.granted()) { actualDirect ->
                     GuestSetup.writeAgentsMd(installer.rootfs, storage, phone, pendingVisualReplies, actualDirect)
@@ -752,6 +809,22 @@ class RuntimeController private constructor(private val app: Context) : DshProce
         DshService.cancelStoppedAlert(app)
         this.baseUrl = baseUrl
         this.token = token
+        // The root engine outlives this app process (setsid), and its token is printed
+        // exactly once. Record what adoption needs now; a failure here only costs the
+        // next app start a restart, never this run.
+        if (source.root && !runSafe) {
+            try {
+                EngineHandoff.save(app.filesDir, EngineHandoff.Record(
+                    pid = File(installer.rootfs, "tmp/dsh-web.pid").takeIf { it.isFile }
+                        ?.readText()?.trim()?.toIntOrNull() ?: -1,
+                    port = source.port,
+                    token = token,
+                    rootfs = installer.rootfs.canonicalPath,
+                ))
+            } catch (e: Exception) {
+                log("[dsh-app] could not record the engine for adoption: ${e.javaClass.simpleName}", "system")
+            }
+        }
         if ((phase == Phase.STARTING || phase == Phase.RUNNING) &&
             stopGen < runGen && !resetting) {
             managedSkillGate.ready(runGen, token)
@@ -779,6 +852,9 @@ class RuntimeController private constructor(private val app: Context) : DshProce
     @Synchronized override fun onExit(source: DshProcess, code: Int, expected: Boolean) {
         if (source !== process) return
         try {
+            // The engine is gone either way: an adoption record now points at nothing.
+            // Keeping it would make the next start pay a failed health check first.
+            EngineHandoff.clear(app.filesDir)
             if (!expected && stopGen < runGen) {
                 source.launchDiagnostics.failed(if (source.startupError != null) "startFailed" else "exit:$code")
             }

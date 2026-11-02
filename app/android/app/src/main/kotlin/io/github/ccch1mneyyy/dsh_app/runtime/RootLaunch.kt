@@ -195,22 +195,28 @@ object RootLaunch {
             // with the host's Toybox chroot, then the rootfs's setpriv drops the uid and
             // execs the engine. `chroot` needs root for the chroot(2) call alone; setpriv
             // is what actually takes the engine off root.
+            //
+            // setsid detaches the engine from the app's session and process group, so a
+            // kill (or an App death) aimed at that group leaves it running for adoption
+            // (see AdoptedEngine). It must sit OUTSIDE the chroot: the rootfs has no
+            // /system/bin/setsid, and util-linux ships one only at /usr/bin/setsid.
             val inner = "$SETPRIV --reuid=$appUid --regid=$appUid " +
                 (if (appGids.isEmpty()) "--clear-groups " else "--groups=${appGids.joinToString(",")} ") +
                 "$ENV -i " +
                 guest.entries.joinToString(" ") { (key, value) -> q("$key=$value") } +
                 " /bin/sh -c " + q(argv.last())
-            appendLine("exec $HOST_CHROOT ${q(rootPath)} /bin/sh -c ${q(inner)}")
+            appendLine("exec $HOST_SETSID $HOST_CHROOT ${q(rootPath)} /bin/sh -c ${q(inner)}")
         }
         return Plan(script, File(root, "root"))
     }
 
     /**
-     * The host's chroot (Toybox) is the only one the launching shell can resolve; every
-     * path after it is the rootfs's own. These are Ubuntu 24.04's locations: util-linux
-     * puts setpriv and env in /usr/bin.
+     * The host's chroot and setsid (Toybox) are the only ones the launching shell can
+     * resolve; every path after them is the rootfs's own. These are Ubuntu 24.04's
+     * locations: util-linux puts setpriv and env in /usr/bin.
      */
     private const val HOST_CHROOT = "/system/bin/chroot"
+    private const val HOST_SETSID = "/system/bin/setsid"
     private const val SETPRIV = "/usr/bin/setpriv"
     private const val ENV = "/usr/bin/env"
 }

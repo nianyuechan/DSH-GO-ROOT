@@ -126,11 +126,22 @@ class RootLaunchTest {
         val plan = RootLaunch.prepare(rootfs, composedArgv(), appUid = 10245, appGids = gids)
         // The host shell can only resolve the host's own chroot; everything after it is
         // the rootfs's own paths, which exist only once we are inside.
-        assertTrue(plan.script.contains("exec /system/bin/chroot '${rootfs.path}' /bin/sh -c "))
+        assertTrue(plan.script.contains("exec /system/bin/setsid /system/bin/chroot '${rootfs.path}' /bin/sh -c "))
         assertTrue(plan.script.contains("/usr/bin/setpriv --reuid=10245 --regid=10245"))
         // A bare `chroot` would resolve through the host's PATH, which is not what runs here.
         assertFalse(Regex("exec chroot ").containsMatchIn(plan.script))
         assertFalse("the host has no Ubuntu tool tree", plan.script.contains("${rootfs.path}/usr/bin/setpriv"))
+    }
+
+    @Test
+    fun `setsid sits outside the chroot so the engine leaves the app's process group`() {
+        val plan = RootLaunch.prepare(rootfs, composedArgv(), appUid = 10245, appGids = gids)
+        val line = plan.script.lines().last { it.startsWith("exec ") }
+        // Order matters: setsid(1) must be the host's, before the chroot replaces the root.
+        val sid = line.indexOf("/system/bin/setsid")
+        val chroot = line.indexOf("/system/bin/chroot")
+        assertTrue("both tools must be present", sid >= 0 && chroot >= 0)
+        assertTrue("setsid must run before the chroot", sid < chroot)
     }
 
     @Test

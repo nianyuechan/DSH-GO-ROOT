@@ -35,6 +35,12 @@ class DshProcess(
     }
 
     @Volatile private var process: Process? = null
+    /**
+     * Set instead of [process] by [adopt]: the engine was started by an earlier app process,
+     * so there is no child of ours to hold. Liveness then comes from the pid file, and
+     * [alive] is the single place that knows both shapes.
+     */
+    @Volatile private var adoptedPid: Int? = null
     @Volatile private var stopping = false
     @Volatile private var expectedExit = false
     @Volatile private var readyReported = false
@@ -65,10 +71,41 @@ class DshProcess(
         private set
 
     val launchDiagnostics = LaunchDiagnostics()
-    val executionMode: String? get() = launchDiagnostics.currentMode(process?.isAlive == true)
+    val executionMode: String? get() = launchDiagnostics.currentMode(alive)
+
+    /** A spawned child, or an adopted engine still answering on its pid. */
+    val alive: Boolean
+        get() = process?.isAlive == true || adoptedPid?.let { File("/proc/$it").exists() } == true
 
     var directFallbackReason: String? = null
         private set
+
+    /**
+     * Take over an engine that is still running from an earlier app process instead of
+     * spawning one. [AdoptedEngine.check] has already verified pid, uid, command, cwd and
+     * an authenticated HTTP answer; this only wires the listener and reports ready.
+     *
+     * No child exists, so [stop] has to signal the pid file's process directly — the
+     * adoption path keeps that working through [adoptedPid].
+     */
+    fun adopt(record: EngineHandoff.Record) {
+        check(process == null && adoptedPid == null) { "already started" }
+        adoptedPid = record.pid
+        port = record.port
+        root = true
+        launchDiagnostics.selected(LaunchDiagnostics.CHROOT, null)
+        launchDiagnostics.spawned()
+        readyReported = true
+        listener.onLog("[dsh-app] adopted the running engine (pid ${record.pid}, port ${record.port})", "system")
+        listener.onReady(this, "http://127.0.0.1:${record.port}", record.token)
+        // Report the exit the app never got to see, so the controller can restart cleanly.
+        waiter = thread(name = "dsh-adopt-wait", isDaemon = true) {
+            while (!stopping && File("/proc/${record.pid}").exists()) Thread.sleep(250)
+            if (stopping) return@thread
+            synchronized(this) { adoptedPid = null }
+            listener.onExit(this, 0, false)
+        }
+    }
 
     /**
      * [binds] are extra proot `-b host:guest` mounts, inserted before the guest command.
@@ -284,6 +321,27 @@ class DshProcess(
         stopping = true
         if (expected) expectedExit = true
         if (stopper != null) return
+        // An adopted engine has no child of ours: signal its pid file like any other run,
+        // and let the adoption waiter report the exit.
+        val adopted = adoptedPid
+        if (process == null) {
+            if (adopted == null) return
+            stopper = thread(name = "dsh-stop", isDaemon = true) {
+                try {
+                    val node = guestRecord()
+                    if (node != null) signalOwned(node, OsConstants.SIGTERM)
+                    // The pid file is the only handle; fall back to it if /proc no longer
+                    // matches an owned record (the engine may have re-exec'd).
+                    if (node == null) runCatching { Os.kill(adopted, OsConstants.SIGTERM) }
+                    val deadline = System.nanoTime() + 5_000_000_000L
+                    while (System.nanoTime() < deadline && File("/proc/$adopted").exists()) Thread.sleep(100)
+                    if (File("/proc/$adopted").exists()) runCatching { Os.kill(adopted, OsConstants.SIGKILL) }
+                } finally {
+                    killStrays()
+                }
+            }
+            return
+        }
         val p = process ?: return
         stopper = thread(name = "dsh-stop", isDaemon = true) {
             try {
