@@ -113,5 +113,6 @@
   "searchKwWebCollapse": "工作步骤,收起,折叠,网页版",
   "searchKwWebBusySend": "发送,排队,插话,AI 工作时",
   "searchKwPluginsMarket": "插件市场,安装插件,市场,获取插件",
-  "searchKwUsageStats": "统计,使用统计,匿名,隐私,数据,改进,遥测,分析"
+  "searchKwUsageStats": "统计,使用统计,匿名,隐私,数据,改进,遥测,分析",
+  "searchKwQuickPanel": "左滑,快捷入口,手势,滑动,目录,自定义目录,快捷,常用入口"
 }

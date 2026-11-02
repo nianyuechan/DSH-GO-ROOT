@@ -2,6 +2,58 @@
 
 每个版本先中文、后英文。发版时把对应版本的正文（不含版本标题）作为 Release 正文，见 `docs/release.md`。
 
+## 1.0.9 · 2026-11-02
+
+### 中文
+
+- Android 17：不打扰模式能点了。系统删掉了后台屏下发输入要用的隐藏接口，root、Sui、Shizuku、自连 ADB 四条通道都只能读屏、点不了，现在改用还在的接口。我们手上没有 Android 17 真机，遇到问题请开 issue 反馈。
+- Android 17：自连 ADB 用的 TLS 库（Conscrypt）升到 2.8.0，在 16 KB 内存页的设备上也能加载。
+- 不打扰模式：新增「保持 X 通道」开关，默认关。打开后，通道断开、App 被杀或手机重启，都会自己连回去。root 打开后 DSH Go 会自己再向 root 管理器申请，给不给仍由管理器决定；没打开就绝不会自动执行 `su`。这个开关还没在真机上验证过，遇到问题请开 issue 反馈。
+- 不打扰模式：读后台屏时按包名取目标 App 的窗口，不再只看第一个窗口；每次点按、滑动、按键只发一次，系统没确认时不再说「系统拒绝」，也不再让你去开 USB 调试；对后台屏按 HOME 这类系统键会直接失败，不再把物理屏送回桌面；root 的一键授权复用已连接的 root，不再多跑一次 `su`。
+- 自连 ADB：在通知里输入配对码现在真的能配对了（以前每次都失败，结果还被丢掉，看起来没有任何反应），通知会显示配对结果。
+- 手机操控悬浮条：胶囊 3 秒不碰就按「闲置时不透明度」变淡，碰一下恢复；卡片和等你处理的时候不变淡。开了「闲置时自动收起」的，还是先收成小球再变淡。
+- 新增左滑快捷入口：在聊天区左滑，从右侧打开插件、引擎、设置等常用入口。可以在 设置 → 界面 里关掉，或者选显示哪些、调顺序。
+- 会话：永久删除不再误报「此主机不支持」，引擎还没准备好时提示暂不可用；刚新建、还没写到磁盘的会话也能删了；删除一次只发一个请求。会话搜索跟随当前连接，不再用旧连接的结果回答。
+- 对话：准备失败或中断时，还没被接收的输入按原顺序放回队列，不会丢。图片被拒时，不再一律让你换 V4.1 Flash，而是说明当前模型没声明支持图片，可以换模型或把自定义模型的输入类型改成「文本和图片」。
+- 附件：单个文件上限从 30 MB 提到 200 MB，单条消息总量 400 MB；文件走引擎的流式上传。旧版主机上仍是 30 MB。
+- 网络：引擎把 IPv4 和 IPv6 分开解析，网络拒绝 IPv6 查询时不再连带 IPv4 一起失败。PRoot 里的 git、curl、pip 这次没有覆盖到。
+- 引擎：卡死时，停止和重置会等旧进程真正退出；启动早期堆内存耗尽会计入自动安全模式，不再每次打开都加载同一个插件。
+- 更新：优先从 dl.dshtui.com 下载，并支持增量更新（这一版换了运行时，还是下整包，下一版起才会变小）；点了安装后没等到系统结果时，不再说「已取消安装」，安装包会留着。
+- 插件市场：优先从 dl.dshtui.com 读目录，手机上留一份，读不到时用这份。
+- 分享：导出和分享对话时，`Authorization` 请求头里的凭据会被隐藏。
+- 文件：XLSX 预览的预算把铺开的空单元格也算进去；刷新之后不再被更早的修改时间覆盖。
+- 终端：改名失败的结果晚到时，不再影响已离开的页面或重建后的终端。
+- 插件：重载之后才完成的面板视图不再用旧注册回答；App 在后台时新建的流也会按时关闭；被关闭的连接中止的文件回调不再算成插件的错。
+- 手机操控工具：`run_code` 能看到 intent、collect、tap_xy 的参数了；tap_xy 缺屏幕号时报错说对参数名。
+- 诊断：快照里的内存和剩余存储单位对了，不再把 GiB 显示成 MB。
+- 插件开发：插件技能和检查清单按 view v2 写，不再说只有 16 个组件。
+- 性能：解压运行时并行解码；引擎日志成批处理；长对话只折叠新增的部分；重复打开会话列表跳过没变的记录；启动缓存在 Direct 模式下也生效；本机连接不等 mux 就能先加载会话列表。
+
+### English
+
+- Android 17: Do Not Disturb can tap again. The system removed the hidden interface the background screen used to send input, so root, Sui, Shizuku and self-paired ADB could all read the screen but not touch it; it now uses the one that remains. We don't have an Android 17 device, so please open an issue if it misbehaves.
+- Android 17: the TLS library self-paired ADB uses (Conscrypt) is now 2.8.0, which loads on 16 KB-page devices.
+- Do Not Disturb: a new "Keep this channel" switch, off by default. With it on, the channel reconnects by itself after a drop, the app being killed or a reboot. For root, DSH Go asks your root manager again by itself and the manager still decides; with it off, `su` never runs on its own. This switch hasn't been tried on a real device yet, so please open an issue if it misbehaves.
+- Do Not Disturb: reading the background screen picks the target app's window by package instead of only looking at the first; each tap, swipe and key is sent once, and when the system doesn't confirm one it no longer says "rejected" or sends you to USB debugging settings; HOME and similar system keys on the background screen fail outright instead of sending the physical screen home; the one-tap root grant reuses the connected root instead of running `su` again.
+- Self-paired ADB: typing the pairing code into the notification now really pairs (it used to fail every time and drop the result, so nothing seemed to happen), and the notification shows the outcome.
+- Phone control overlay: the capsule fades to Idle opacity after 3 seconds untouched and comes back at a touch; the card and anything waiting for you stay solid. With Collapse when idle on, it still shrinks to a ball first and the ball fades.
+- New left-swipe shortcuts: swipe left over the chat to open plugins, engine, settings and other common places from the right. Turn it off or choose and order the items in Settings → Interface.
+- Sessions: permanent delete no longer says "this host doesn't support it" while the engine is starting; a new session that was never written to disk can be deleted; one delete sends one request. Session search follows the current connection instead of answering from the old one.
+- Chat: input not yet accepted goes back to the queue in order when preparing fails or a turn is interrupted, so it isn't lost. Image refusals no longer send everyone to V4.1 Flash: they say the model doesn't declare image input, and that you can switch models or set a custom model's Input to Text + image.
+- Attachments: up to 200 MB per file (was 30 MB) and 400 MB per message, uploaded through the engine's streaming route. Older hosts stay at 30 MB.
+- Network: the engine resolves IPv4 and IPv6 separately, so a network that refuses IPv6 lookups no longer takes IPv4 down too. git, curl and pip inside PRoot aren't covered yet.
+- Engine: when it hangs, stop and reset wait for the old process to really exit; running out of heap early in startup now counts toward safe mode, so the same plugin isn't loaded on every launch.
+- Updates: downloads come from dl.dshtui.com first, with delta updates (this version changes the runtime, so it's still a full download; they get smaller from the next one); an install with no result from the system no longer says "cancelled", and the package is kept.
+- Plugin market: the catalog comes from dl.dshtui.com first, with a copy kept on the phone for when it can't be read.
+- Sharing: credentials in `Authorization` headers are hidden in exports and shares.
+- Files: the XLSX preview's budget counts the empty cells it lays out; an older modified time can't overwrite a newer one after a refresh.
+- Terminal: a late rename failure can't touch a page you left or a rebuilt terminal.
+- Plugins: a panel view that finishes after a reload no longer answers from the old registration; a stream made while the app is in the background still closes on time; a file callback stopped by a closed connection isn't counted against the plugin.
+- Phone control tools: `run_code` now sees the parameters of intent, collect and tap_xy; tap_xy's missing-screen error names the right parameter.
+- Diagnostics: memory and free storage in the snapshot have the right units, no longer showing GiB as MB.
+- Plugin development: the plugin skill and checklist describe view v2, not only 16 components.
+- Performance: the runtime unpacks with parallel decoding; engine logs are batched; long chats fold only what's new; re-opening the session list skips unchanged records; the boot cache also works in Direct mode; the local connection can load the session list before the mux is up.
+
 ## 1.0.8 · 2026-11-01
 
 ### 中文

@@ -353,6 +353,57 @@ test('host cache budget is shared across streams and freed on cancellation', asy
   assert.equal((await upload(f, blocked, fresh, bytes)).status, 200);
 });
 
+// Exercise actual stream revocation while the HTTP callback is already running.
+// The AbortSignal is the gate; no elapsed-time assumption is needed.
+for (const outcome of ['reject', 'resolve', 'status']) {
+  test(`disconnected file callback ${outcome} preserves cancellation and health`, async t => {
+    const f = await fixture(t);
+    let enter;
+    const entered = new Promise(resolve => { enter = resolve; });
+    f.service.on('go', async (scope, event) => {
+      if (event.action !== 'selected') return choice;
+      const aborted = new Promise(resolve => event.signal.addEventListener('abort', resolve, { once: true }));
+      enter();
+      await aborted;
+      if (outcome === 'reject') throw new Error('callback stopped after stream close');
+      if (outcome === 'status') throw { status: 409, code: 'bad-request', message: 'callback status retained' };
+    });
+    const w = await f.ws(['files']), e = (await f.invoke(w)).effects[0];
+    assert.equal((await upload(f, w, e, 'x')).status, 200);
+    const pending = complete(f, w, e);
+    await entered;
+    w.socket.destroy();
+    const result = await pending;
+    // Read health before checking status so the original failure records both facts.
+    const contributions = await (await f.request('contributions')).json();
+    const violations = contributions.plugins.find(p => p.pkg === 'file-test').issues.filter(i => i.code === 'violation');
+    t.diagnostic(JSON.stringify({ outcome, result, violations }));
+    assert.deepEqual(violations, []);
+    // A plugin's status-bearing object is passed through by complete; the
+    // outer route still sanitizes non-HttpError objects to its existing 500.
+    assert.equal(result.status, outcome === 'status' ? 500 : 410);
+    assert.equal(result.error.code, outcome === 'status' ? 'plugin-error' : 'cancelled');
+    if (outcome === 'status') assert.equal(result.error.message, 'internal error');
+  });
+}
+
+test('current file callback ordinary rejection remains a counted plugin error', async t => {
+  const f = await fixture(t);
+  f.service.on('go', (scope, event) => {
+    if (event.action !== 'selected') return choice;
+    throw new Error('current callback failed');
+  });
+  const w = await f.ws(['files']), e = (await f.invoke(w)).effects[0];
+  assert.equal((await upload(f, w, e, 'x')).status, 200);
+  const result = await complete(f, w, e);
+  assert.equal(result.status, 500);
+  assert.equal(result.error.code, 'plugin-error');
+  const contributions = await (await f.request('contributions')).json();
+  const violation = contributions.plugins.find(p => p.pkg === 'file-test').issues.find(i => i.code === 'violation');
+  assert.equal(violation.count, 1);
+  assert.match(violation.message, /^plugin-error:/);
+});
+
 test('callback timeout invalidates handles and rejects a late async continuation', async t => {
   const f = await fixture(t, manifest, { handlerTimeoutMs: 25 });
   let signal, lateRead, resume;
@@ -368,6 +419,10 @@ test('callback timeout invalidates handles and rejects a late async continuation
   const w = await f.ws(['files']), e = (await f.invoke(w)).effects[0];
   assert.equal((await upload(f, w, e, 'x')).status, 200);
   assert.equal((await complete(f, w, e)).status, 504);
+  const contributions = await (await f.request('contributions')).json();
+  const violation = contributions.plugins.find(p => p.pkg === 'file-test').issues.find(i => i.code === 'violation');
+  assert.equal(violation.count, 1);
+  assert.match(violation.message, /^timeout:/);
   assert.equal(signal.aborted, true); resume(); await delay(1); assert.equal(lateRead, true);
   assert.equal((await complete(f, w, e)).status, 404);
 });

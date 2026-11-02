@@ -780,6 +780,12 @@ abstract final class Spots {
     title: (l) => l.hubHardwareEnterSends,
     keywords: (l) => l.hubHardwareEnterSendsHint,
   );
+  static final quickPanel = SettingSpot(
+    'quick-panel',
+    page: SettingsPageId.interface,
+    title: (l) => l.hubQuickPanel,
+    keywords: (l) => l.searchKwQuickPanel,
+  );
   static final tableTint = SettingSpot(
     'table-tint',
     page: SettingsPageId.interface,
@@ -1056,6 +1062,7 @@ final _rows = <SettingSpot>[
   Spots.petDisplayWhen,
   Spots.uiMode,
   Spots.hardwareEnterSends,
+  Spots.quickPanel,
   Spots.tableTint,
   Spots.webApp,
   Spots.openWeb,

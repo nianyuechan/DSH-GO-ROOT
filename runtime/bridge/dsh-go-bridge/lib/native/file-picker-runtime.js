@@ -214,6 +214,7 @@ export class FilePickerRuntime {
       this.sendJson(res, 200, { v: PROTOCOL, effects: norm.effects, issues: norm.issues });
     } catch (error) {
       if (error?.status) throw error;
+      if (!this.alive(e)) this.fail(410, 'cancelled', 'file selection expired');
       this.core.violation(e.pkg, error?.timeout ? 'timeout' : 'plugin-error', `file callback(${e.id}): ${errorText(error)}`);
       this.fail(error?.timeout ? 504 : 500, error?.timeout ? 'timeout' : 'plugin-error', 'file selection callback failed');
     } finally {

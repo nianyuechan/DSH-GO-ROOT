@@ -128,6 +128,14 @@ export function createNativeRoutes(core) {
     return rec;
   };
 
+  // Whether pkg is still the plugin load and registration that origin was taken from.
+  const isCurrent = (pkg, kind, id, origin) => {
+    const now = core.plugin(pkg);
+    return !disposed && now !== undefined && core.stateOf(now) === "ok"
+      && now.uid === origin.uid && now.stamp === origin.stamp
+      && core.registration(pkg, kind, id)?.token === origin.token;
+  };
+
   // -------------------------------------------------------------- contributions
 
   function contributions(req, res, url) {
@@ -178,6 +186,11 @@ export function createNativeRoutes(core) {
     const item = rec.parsed.items.panels.find((p) => p.id === id);
     if (item === undefined) fail(404, "not-found", `${pkg} declares no panel ${id}`);
     const reg = core.registration(pkg, "panels", id);
+    // Like invoke: a view or first data that finishes after a reload answers no-handler.
+    const origin = { uid: rec.uid, stamp: rec.stamp, token: reg?.token };
+    const requireCurrent = () => {
+      if (!isCurrent(pkg, "panels", id, origin)) fail(409, "no-handler", "panel registration was unloaded or changed");
+    };
     let viewJson;
     if (reg !== undefined) {
       let result;
@@ -186,10 +199,12 @@ export function createNativeRoutes(core) {
           ? await withTimeout(call(reg.def.view, { ...scope.scope }, caps.forPlugin()), L.viewTimeoutMs)
           : reg.def.view;
       } catch (error) {
+        requireCurrent();
         core.violation(pkg, error?.timeout ? "timeout" : "plugin-error", `view(${id}): ${errorText(error)}`);
         if (error?.timeout) fail(504, "timeout", `view(${id}) took longer than ${L.viewTimeoutMs} ms`);
         fail(500, "plugin-error", `view(${id}) failed`);
       }
+      requireCurrent();
       const json = isPlainObject(result) ? toJson(result) : undefined;
       if (json === undefined) {
         core.violation(pkg, "invalid-view", `view(${id}) is not a JSON object`);
@@ -201,7 +216,7 @@ export function createNativeRoutes(core) {
       }
       viewJson = json;
     } else if (item.viewFile !== undefined) {
-      viewJson = toJson(await staticView(item.viewFile));
+      viewJson = toJson(await staticView(item.viewFile).finally(requireCurrent));
     } else {
       fail(409, "no-handler", `${pkg} has neither panel("${id}") nor a static view`);
     }
@@ -222,6 +237,7 @@ export function createNativeRoutes(core) {
         } finally {
           feed.unpin();
         }
+        requireCurrent();
         if (feed.data !== undefined) {
           data = feed.data;
           rev = feed.rev;
@@ -280,12 +296,7 @@ export function createNativeRoutes(core) {
     if (typeof fn !== "function") fail(409, "no-handler", `no handler for ${body.id}${body.action ? `/${body.action}` : ""}`);
     // Bind all results (not only file capabilities) to this exact registration.
     const origin = { uid: rec.uid, stamp: rec.stamp, token: registration.token };
-    const current = () => {
-      const now = core.plugin(body.pkg);
-      return !disposed && now !== undefined && core.stateOf(now) === "ok"
-        && now.uid === origin.uid && now.stamp === origin.stamp
-        && core.registration(body.pkg, kind, body.id)?.token === origin.token;
-    };
+    const current = () => isCurrent(body.pkg, kind, body.id, origin);
     const rejectStale = () => {
       controller.abort();
       return sendJson(res, 200, { v: PROTOCOL, effects: [], issues: [{ path: "/runtime/effects", code: "bad-effect", severity: "warn", message: "invocation registration was unloaded or changed" }] });

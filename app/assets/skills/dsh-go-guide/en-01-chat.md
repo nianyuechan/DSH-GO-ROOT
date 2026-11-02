@@ -89,6 +89,15 @@ Touch and hold a chat for **Pin**, **Rename**, **Move to folder**, **Share**, **
 - To get an archived chat back, tap **Search chats**, find it and tap **Restore and open**.
 - Filter the list with **All**, **Running**, **Pending** and **Unread**. The ⋯ at the end of the workspace row sorts by **Recent activity** or **Date created**, and has **New folder** and **Manage folders**.
 
+## Swipe-left shortcuts
+
+<!-- nav: commonSettings,hubSettingsInterface,hubQuickPanel -->
+`Settings › Interface › Swipe-left shortcuts`
+
+Swipe right to left over the chat and **Shortcuts** slides in from the right; tap one to open that page. It starts with **Plugins**, **Local engine** and **Settings**. Swiping on code blocks, tables and other content that scrolls sideways still scrolls them. Back closes the panel first.
+
+You can turn off **Open with a left swipe**, and under **What it lists** tick what to show and drag to reorder. There's no swipe while the chat list stays open at the side.
+
 ## Hardware keyboard
 
 Focus the chat's composer before using these shortcuts:

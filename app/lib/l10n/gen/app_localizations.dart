@@ -13490,6 +13490,36 @@ abstract class L10n {
   /// **'开启后，Shift+Enter 换行。屏幕键盘仍换行；Ctrl/⌘+Enter 始终可发送。'**
   String get hubHardwareEnterSendsHint;
 
+  /// No description provided for @hubQuickPanel.
+  ///
+  /// In zh, this message translates to:
+  /// **'左滑快捷入口'**
+  String get hubQuickPanel;
+
+  /// No description provided for @hubQuickPanelSwipe.
+  ///
+  /// In zh, this message translates to:
+  /// **'左滑打开'**
+  String get hubQuickPanelSwipe;
+
+  /// No description provided for @hubQuickPanelSwipeHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'在对话里从右向左滑。代码块、表格这些能横向滚动的内容不受影响。'**
+  String get hubQuickPanelSwipeHint;
+
+  /// No description provided for @hubQuickPanelItems.
+  ///
+  /// In zh, this message translates to:
+  /// **'显示的入口'**
+  String get hubQuickPanelItems;
+
+  /// No description provided for @hubQuickPanelItemsNone.
+  ///
+  /// In zh, this message translates to:
+  /// **'没有选择，左滑不会打开'**
+  String get hubQuickPanelItemsNone;
+
   /// No description provided for @launchScreenTitle.
   ///
   /// In zh, this message translates to:
@@ -25394,6 +25424,12 @@ abstract class L10n {
   /// **'统计,使用统计,匿名,隐私,数据,改进,遥测,分析'**
   String get searchKwUsageStats;
 
+  /// No description provided for @searchKwQuickPanel.
+  ///
+  /// In zh, this message translates to:
+  /// **'左滑,快捷入口,手势,滑动,目录,自定义目录,快捷,常用入口'**
+  String get searchKwQuickPanel;
+
   /// No description provided for @shellDeletePermanently.
   ///
   /// In zh, this message translates to:
@@ -27151,6 +27187,18 @@ abstract class L10n {
   /// In zh, this message translates to:
   /// **'已归档 {count} 个对话，{failed} 个没能归档'**
   String shellChatsArchivedPartial(int count, int failed);
+
+  /// No description provided for @shellQuickPanel.
+  ///
+  /// In zh, this message translates to:
+  /// **'快捷入口'**
+  String get shellQuickPanel;
+
+  /// No description provided for @shellQuickPanelHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'在「{path}」里调整'**
+  String shellQuickPanelHint(String path);
 
   /// The star prompt's first line. hours is the whole hours of use so far, rounded down; 0 is half an hour (the first ask comes after 30 minutes). The word joiner keeps the ~ on the line of the word before it.
   ///

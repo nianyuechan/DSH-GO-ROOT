@@ -7369,6 +7369,21 @@ class L10nZh extends L10n {
   String get hubHardwareEnterSendsHint => '开启后，Shift+Enter 换行。屏幕键盘仍换行；Ctrl/⌘+Enter 始终可发送。';
 
   @override
+  String get hubQuickPanel => '左滑快捷入口';
+
+  @override
+  String get hubQuickPanelSwipe => '左滑打开';
+
+  @override
+  String get hubQuickPanelSwipeHint => '在对话里从右向左滑。代码块、表格这些能横向滚动的内容不受影响。';
+
+  @override
+  String get hubQuickPanelItems => '显示的入口';
+
+  @override
+  String get hubQuickPanelItemsNone => '没有选择，左滑不会打开';
+
+  @override
   String get launchScreenTitle => '启动画面';
 
   @override
@@ -13871,6 +13886,9 @@ class L10nZh extends L10n {
   String get searchKwUsageStats => '统计,使用统计,匿名,隐私,数据,改进,遥测,分析';
 
   @override
+  String get searchKwQuickPanel => '左滑,快捷入口,手势,滑动,目录,自定义目录,快捷,常用入口';
+
+  @override
   String get shellDeletePermanently => '永久删除';
 
   @override
@@ -14846,6 +14864,14 @@ class L10nZh extends L10n {
   @override
   String shellChatsArchivedPartial(int count, int failed) {
     return '已归档 $count 个对话，$failed 个没能归档';
+  }
+
+  @override
+  String get shellQuickPanel => '快捷入口';
+
+  @override
+  String shellQuickPanelHint(String path) {
+    return '在「$path」里调整';
   }
 
   @override

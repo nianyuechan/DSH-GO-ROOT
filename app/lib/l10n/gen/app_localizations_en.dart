@@ -7791,6 +7791,22 @@ class L10nEn extends L10n {
       'When on, Shift+Enter inserts a new line. The on-screen keyboard keeps newlines; Ctrl/⌘+Enter always sends.';
 
   @override
+  String get hubQuickPanel => 'Swipe-left shortcuts';
+
+  @override
+  String get hubQuickPanelSwipe => 'Open with a left swipe';
+
+  @override
+  String get hubQuickPanelSwipeHint =>
+      'Swipe right to left over the chat. Code blocks, tables and other content that scrolls sideways aren’t affected.';
+
+  @override
+  String get hubQuickPanelItems => 'What it lists';
+
+  @override
+  String get hubQuickPanelItemsNone => 'Nothing chosen: a left swipe won\'t open it';
+
+  @override
   String get launchScreenTitle => 'Launch screen';
 
   @override
@@ -14576,6 +14592,9 @@ class L10nEn extends L10n {
   String get searchKwUsageStats => 'statistics,stats,usage data,analytics,telemetry,anonymous,privacy,data';
 
   @override
+  String get searchKwQuickPanel => 'swipe,left swipe,shortcuts,gesture,quick panel,quick access';
+
+  @override
   String get shellDeletePermanently => 'Delete permanently';
 
   @override
@@ -15666,6 +15685,14 @@ class L10nEn extends L10n {
       one: 'couldn’t archive 1 chat',
     );
     return '$_temp0; $_temp1';
+  }
+
+  @override
+  String get shellQuickPanel => 'Shortcuts';
+
+  @override
+  String shellQuickPanelHint(String path) {
+    return 'Change these in $path';
   }
 
   @override

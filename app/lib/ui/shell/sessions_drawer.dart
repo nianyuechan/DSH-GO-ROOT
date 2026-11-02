@@ -45,6 +45,7 @@ import '../workspace/workspaces_page.dart';
 import 'adaptive/adaptive_layout.dart' show WindowClass;
 import 'brand_mark.dart';
 import 'drawer/drawer_actions.dart';
+import 'drawer/drawer_destination.dart';
 import 'drawer/archive_notice.dart';
 import 'drawer/drawer_filter_bar.dart';
 import 'drawer/drawer_list.dart';
@@ -53,11 +54,8 @@ import 'drawer/session_deletion.dart';
 import 'session_search_page.dart';
 
 export '../../state/drawer_view_state.dart' show SessionDay, sessionDayOf;
+export 'drawer/drawer_destination.dart';
 export 'drawer/session_tile.dart' show SessionTile;
-
-/// Secondary destinations the drawer (or something inside it) can open.
-/// Pages the drawer opens; [settingsSearch] is ⚙ held down.
-enum DrawerDestination { web, remote, plugins, engine, settings, settingsSearch, features }
 
 /// Display title for a session: DSH's generated title (a generation
 /// request's header left out), else a neutral fallback.
