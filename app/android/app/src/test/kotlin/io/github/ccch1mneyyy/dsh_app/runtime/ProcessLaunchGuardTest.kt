@@ -118,6 +118,9 @@ class ProcessLaunchGuardTest {
         // The engine's own su probe and chroot launcher (`su -c "exec sh <script>"`). Both are
         // Java ProcessBuilder children too, and both are needed before RootLaunch can run.
         "app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/runtime/RootLaunch.kt",
+        // Adoption reads the chroot engine's /proc facts as root: the engine runs in the
+        // root manager's SELinux domain, which this app cannot read directly.
+        "app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/runtime/RuntimeController.kt",
     )
     private val localHelper = "app/lib/remote/ssh/remote_shell.dart"
 

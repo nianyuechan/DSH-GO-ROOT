@@ -189,11 +189,17 @@ class RuntimeController private constructor(private val app: Context) : DshProce
     private fun tryAdopt(p: DshProcess): DshProcess? {
         val record = EngineHandoff.load(app.filesDir) ?: return null
         val root = installer.rootfs.canonicalPath
+        log("[dsh-app] adoption: considering pid ${record.pid} on port ${record.port}", "system")
         val result = AdoptedEngine.check(
             record = record,
             rootfs = installer.rootfs,
             myUid = android.os.Process.myUid(),
-            liveness = ::liveness,
+            liveness = { pid ->
+                liveness(pid).also { seen ->
+                    log("[dsh-app] adoption: pid $pid reads as ${seen.javaClass.simpleName}" +
+                        (seen as? AdoptedEngine.Liveness.Alive)?.let { " uid=${it.uid} cwd=${it.cwd} cmd=${it.command.take(50)}" }.orEmpty(), "system")
+                }
+            },
             health = AdoptedEngine.httpHealthCheck(),
         )
         if (!result.adopted) {
@@ -212,19 +218,80 @@ class RuntimeController private constructor(private val app: Context) : DshProce
         }
     }
 
-    /** What /proc says about one pid, without ever guessing when it cannot be read. */
+    /**
+     * What /proc says about one pid, without ever guessing when it cannot be read.
+     *
+     * The chroot engine is started by `su`, so it runs in the root manager's SELinux domain
+     * (`u:r:ksu:s0` on KernelSU) while this app is `u:r:untrusted_app`, which is denied
+     * /proc/<pid>/{stat,cmdline,cwd}. Reading the same three facts through su is the only
+     * way to see them; adoption is root-only anyway, so the extra su call adds nothing.
+     */
     private fun liveness(pid: Int): AdoptedEngine.Liveness {
-        val dir = File("/proc/$pid")
-        if (!dir.exists()) return AdoptedEngine.Liveness.Absent
-        return try {
-            val uid = android.system.Os.stat("/proc/$pid").st_uid
-            val command = File("/proc/$pid/cmdline").readText().replace('\u0000', ' ').trim()
-            val cwd = android.system.Os.readlink("/proc/$pid/cwd")
-            AdoptedEngine.Liveness.Alive(uid, command, cwd)
-        } catch (_: Exception) {
-            AdoptedEngine.Liveness.Unknown
-        }
+        // No `File("/proc/$pid").exists()` first: under SELinux the engine's ksu domain can
+        // make even the directory invisible to this app, and "cannot see it" must not be
+        // read as "not running". Try the fields, then fall back to asking su.
+        val direct = runCatching {
+            AdoptedEngine.Liveness.Alive(
+                uid = android.system.Os.stat("/proc/$pid").st_uid,
+                command = File("/proc/$pid/cmdline").readText().replace('\u0000', ' ').trim(),
+                cwd = android.system.Os.readlink("/proc/$pid/cwd"),
+            )
+        }.getOrNull()
+        if (direct != null) return direct
+        val viaRoot = suLiveness(pid)
+        if (viaRoot != null) return viaRoot
+        // Both readings failed: now the pid really may be gone, or simply unreadable.
+        return if (File("/proc/$pid").exists()) AdoptedEngine.Liveness.Unknown else AdoptedEngine.Liveness.Absent
     }
+
+    /** The same three facts read as root; null when su itself failed. */
+    private fun suLiveness(pid: Int): AdoptedEngine.Liveness? {
+        // `tr '\\000'` (octal NUL) rather than '\\0': Android's sh does not expand the short
+        // form, and a cmdline with embedded NULs would come back as one unreadable blob.
+        val script = "echo uid=\$(stat -c %u /proc/$pid); " +
+            "echo cwd=\$(readlink /proc/$pid/cwd); " +
+            "echo cmd=\$(tr '\\000' ' ' < /proc/$pid/cmdline)"
+        val output = try {
+            val process = ProcessBuilder("su", "-c", script).redirectErrorStream(true).start()
+            // Read on a worker so a pending authorization cannot block the start sequence
+            // forever: the root manager shows its dialog on the first su of the session.
+            val text = StringBuilder()
+            val reader = Thread({
+                runCatching {
+                    process.inputStream.bufferedReader().use { input ->
+                        val buffer = CharArray(4096)
+                        while (true) {
+                            val read = input.read(buffer)
+                            if (read < 0) break
+                            text.append(buffer, 0, read)
+                        }
+                    }
+                }
+            }, "dsh-adopt-su").apply { isDaemon = true; start() }
+            reader.join(SU_READ_TIMEOUT_MS)
+            if (reader.isAlive) {
+                log("[dsh-app] adoption: su probe timed out for pid $pid", "system")
+                process.destroyForcibly()
+                return null
+            }
+            process.waitFor(1, java.util.concurrent.TimeUnit.SECONDS)
+            text.toString()
+        } catch (e: Exception) {
+            log("[dsh-app] adoption: su probe failed (${e.javaClass.simpleName}: ${e.message})", "system")
+            return null
+        }
+        val uid = Regex("uid=(\\d+)").find(output)?.groupValues?.get(1)?.toIntOrNull()
+        val cwd = Regex("cwd=(.+)").find(output)?.groupValues?.get(1)?.trim()
+        val cmd = Regex("cmd=([\\s\\S]*)").find(output)?.groupValues?.get(1)?.trim().orEmpty()
+        if (uid == null || cwd == null || cmd.isEmpty()) {
+            log("[dsh-app] adoption: cannot read pid $pid (uid=$uid cwd=$cwd cmd=${cmd.take(40)})", "system")
+            return null
+        }
+        return AdoptedEngine.Liveness.Alive(uid, cmd, cwd)
+    }
+
+    /** A pending root-authorization dialog is the person's to answer; do not hang on it. */
+    private val SU_READ_TIMEOUT_MS = 8_000L
 
 
     /**

@@ -163,6 +163,11 @@ object RootLaunch {
         DirectLaunch.webArguments(argv.last()) // reject an unknown future shell template early
 
         val mounts = DirectLaunch.mounts(argv.take(envAt), rootPath)
+        // PRoot's own binds for the pseudo filesystems describe how PRoot fakes them; a
+        // chroot gets the real ones from mount(2) below. Keeping them would mount /dev
+        // twice, and the second pass would try to mkdir over device nodes.
+        val pseudo = listOf("/dev", "/proc", "/sys")
+        val binds = mounts.filterNot { m -> pseudo.any { m.guest == it || m.guest.startsWith("$it/") } }
         // Bind targets live under the rootfs before the chroot happens.
         val preChroot = { guest: String -> rootPath + guest }
         val q = DirectLaunch::quote
@@ -177,13 +182,19 @@ object RootLaunch {
             append(' '); append(q("$rootPath/sys"))
             append(' '); append(q("$rootPath/dev"))
             append(' '); append(q("$rootPath$rootPath"))
-            for (m in mounts) { append(' '); append(q(preChroot(m.guest))) }
+            for (m in binds) { append(' '); append(q(preChroot(m.guest))) }
             appendLine(" >/dev/null 2>&1 || true")
+            // The pseudo filesystems come from these three mounts, not from the PRoot binds
+            // that also mention /dev, /proc and /sys: those are dropped in [binds] above, or
+            // their sub-paths would shadow the real ones (/dev/random after --rbind /dev is
+            // a character device, and `mkdir -p` on it fails).
             appendLine("mount -t proc proc ${q("$rootPath/proc")}")
             appendLine("mount --rbind /dev ${q("$rootPath/dev")}")
             appendLine("mount --rbind /sys ${q("$rootPath/sys")}")
-            for (m in mounts) {
-                appendLine("mkdir -p ${q(preChroot(m.guest))}")
+            for (m in binds) {
+                // -p tolerates a directory that survived an earlier run; a non-directory at a
+                // bind target means /dev/... already covers it, which the mount line handles.
+                appendLine("mkdir -p ${q(preChroot(m.guest))} 2>/dev/null || true")
                 appendLine("mount --bind ${q(m.host)} ${q(preChroot(m.guest))}")
             }
             // The runtime root mounted at its own host path keeps DSH_GO_RUNTIME_ROOT

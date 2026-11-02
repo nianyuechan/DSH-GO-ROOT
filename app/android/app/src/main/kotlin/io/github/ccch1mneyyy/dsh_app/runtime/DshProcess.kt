@@ -73,9 +73,9 @@ class DshProcess(
     val launchDiagnostics = LaunchDiagnostics()
     val executionMode: String? get() = launchDiagnostics.currentMode(alive)
 
-    /** A spawned child, or an adopted engine still answering on its pid. */
+    /** A spawned child, or an adopted engine still answering on its port. */
     val alive: Boolean
-        get() = process?.isAlive == true || adoptedPid?.let { File("/proc/$it").exists() } == true
+        get() = process?.isAlive == true || (adoptedPid != null && canConnect(port))
 
     var directFallbackReason: String? = null
         private set
@@ -98,9 +98,19 @@ class DshProcess(
         readyReported = true
         listener.onLog("[dsh-app] adopted the running engine (pid ${record.pid}, port ${record.port})", "system")
         listener.onReady(this, "http://127.0.0.1:${record.port}", record.token)
-        // Report the exit the app never got to see, so the controller can restart cleanly.
+        // The engine is gone when its port stops answering, not when /proc loses the pid:
+        // under SELinux this app cannot see the ksu-domain process directory at all, so
+        // a /proc check here would report a live engine as dead on the first tick.
+        // The port is the fact the app actually depends on.
         waiter = thread(name = "dsh-adopt-wait", isDaemon = true) {
-            while (!stopping && File("/proc/${record.pid}").exists()) Thread.sleep(250)
+            var missed = 0
+            while (!stopping) {
+                Thread.sleep(1_000)
+                if (stopping) return@thread
+                // Two consecutive failures, so a busy engine is not reported as dead.
+                if (canConnect(record.port)) missed = 0
+                else if (++missed >= 2) break
+            }
             if (stopping) return@thread
             synchronized(this) { adoptedPid = null }
             listener.onExit(this, 0, false)
@@ -331,11 +341,12 @@ class DshProcess(
                     val node = guestRecord()
                     if (node != null) signalOwned(node, OsConstants.SIGTERM)
                     // The pid file is the only handle; fall back to it if /proc no longer
-                    // matches an owned record (the engine may have re-exec'd).
+                    // matches an owned record (the engine may have re-exec'd). Waiting on the
+                    // port rather than /proc keeps this correct under SELinux.
                     if (node == null) runCatching { Os.kill(adopted, OsConstants.SIGTERM) }
                     val deadline = System.nanoTime() + 5_000_000_000L
-                    while (System.nanoTime() < deadline && File("/proc/$adopted").exists()) Thread.sleep(100)
-                    if (File("/proc/$adopted").exists()) runCatching { Os.kill(adopted, OsConstants.SIGKILL) }
+                    while (System.nanoTime() < deadline && canConnect(port)) Thread.sleep(100)
+                    if (canConnect(port)) runCatching { Os.kill(adopted, OsConstants.SIGKILL) }
                 } finally {
                     killStrays()
                 }

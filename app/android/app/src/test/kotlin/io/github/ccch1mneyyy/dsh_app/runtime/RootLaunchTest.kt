@@ -145,6 +145,40 @@ class RootLaunchTest {
     }
 
     @Test
+    fun `the pseudo filesystems come from mount, never from the proot binds`() {
+        // A real launch carries -b /dev, -b /proc, -b /sys and their sub-paths. Each of
+        // those has to disappear: after `--rbind /dev`, /dev/random is a character device
+        // and `mkdir -p` over it aborts the whole script under `set -e`.
+        val argv = composedArgv(
+            "/dev" to "/dev",
+            "/dev/urandom" to "/dev/random",
+            "/proc/self/fd" to "/dev/fd",
+            "/sys" to "/sys",
+            "/storage/emulated/0" to "/sdcard",
+        )
+        val script = RootLaunch.prepare(rootfs, argv, appUid = 10245, appGids = gids).script
+        assertFalse("no bind may target /dev", script.contains("mount --bind '/dev'"))
+        assertFalse("no bind may target /dev/random", script.contains("'/dev/urandom'"))
+        assertFalse("no bind may target /dev/fd", script.contains("mount --bind '/proc/self/fd'"))
+        assertFalse("no bind may target /sys", script.contains("mount --bind '/sys'"))
+        // The user bind still has to be there.
+        assertTrue(script.contains("mount --bind '/storage/emulated/0' '${rootfs.path}/sdcard'"))
+        // Exactly one mount per pseudo filesystem.
+        assertEquals(1, Regex("mount -t proc proc").findAll(script).count())
+        assertEquals(1, Regex("mount --rbind /dev ").findAll(script).count())
+        assertEquals(1, Regex("mount --rbind /sys ").findAll(script).count())
+    }
+
+    @Test
+    fun `a bind target that already exists does not abort the script`() {
+        val script = RootLaunch.prepare(
+            rootfs, composedArgv("/storage/emulated/0" to "/sdcard"), appUid = 10245, appGids = gids,
+        ).script
+        // set -e is on, so a surviving directory from an earlier run must not fail mkdir.
+        assertTrue(script.contains("mkdir -p '${rootfs.path}/sdcard' 2>/dev/null || true"))
+    }
+
+    @Test
     fun `selection defers to safe mode, the saved choice and the last failure`() {
         assertFalse(RootLaunch.select(rootfs, requested = false, safe = false, granted = true).root)
         assertFalse("safe mode stays PRoot", RootLaunch.select(rootfs, requested = true, safe = true, granted = true).root)
