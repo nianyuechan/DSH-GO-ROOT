@@ -112,6 +112,7 @@ class MainActivity : FlutterActivity() {
 
     override fun onResume() {
         super.onResume()
+        io.github.ccch1mneyyy.dsh_app.phone.background.BackgroundControl.get(applicationContext).restoreKeptChannel()
         inForeground = true
         // Coming back counts as activity: the first frames may not be scheduled yet.
         framesActive = true

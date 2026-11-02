@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 /// Minimal in-process imitation of `dsh web` 0.2.0-rc.2's carrier: launch
 /// token login, cookie check, Host/Origin fence, `POST /api/<endpoint>`
-/// envelopes and the `/api/remote.mux` WebSocket with `$events`.
+/// envelopes and the `/api/remote.mux` WebSocket with `$events`. The raw-byte
+/// upload route is opt-in via [FakeDsh.uploadFileBinary].
 class FakeDsh {
   FakeDsh._(this._server);
 
@@ -31,6 +33,14 @@ class FakeDsh {
 
   /// Business handlers: endpoint -> args -> result (`{ok, value|error}`).
   final Map<String, Map<String, Object?> Function(Map<String, Object?> args)> handlers = {};
+
+  /// Raw-byte uploads (`POST /api/session/uploadFileBinary`) in arrival order:
+  /// query, body length and content type.
+  final List<Map<String, Object?>> binaryUploads = [];
+
+  /// Answers the raw-byte upload route. Null answers 404, which is what a Host
+  /// from before the route serves (and what a carrier without it looks like).
+  Map<String, Object?> Function(String sessionId, String? name, List<int> bytes)? uploadFileBinary;
 
   /// Called for each logical stream the client opens (not `$events`).
   void Function(FakeMuxSocket socket, String streamId, String endpoint, Map<String, Object?> payload)? onOpen;
@@ -129,6 +139,31 @@ class FakeDsh {
     if (!_cookieOk(request)) {
       response.statusCode = 401;
       response.write('unauthorized');
+      await response.close();
+      return;
+    }
+    if (request.uri.path == '/api/session/uploadFileBinary' && request.method == 'POST') {
+      final builder = BytesBuilder(copy: false);
+      await for (final chunk in request) {
+        builder.add(chunk);
+      }
+      final bytes = builder.takeBytes();
+      final query = request.uri.queryParameters;
+      binaryUploads.add({
+        'sessionId': query['sessionId'],
+        'name': query['name'],
+        'bytes': bytes.length,
+        'contentType': request.headers.contentType?.mimeType,
+      });
+      final handler = uploadFileBinary;
+      if (handler == null) {
+        // A Host from before the route existed.
+        response.statusCode = 404;
+        await response.close();
+        return;
+      }
+      response.headers.contentType = ContentType.json;
+      response.write(jsonEncode(handler(query['sessionId'] ?? '', query['name'], bytes)));
       await response.close();
       return;
     }

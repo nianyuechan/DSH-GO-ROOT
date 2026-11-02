@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:dsh_app/runtime/background_net.dart';
 import 'package:dsh_app/runtime/runtime_bridge.dart';
 import 'package:dsh_app/runtime/runtime_state.dart';
 import 'package:dsh_app/share_code/guest_fs.dart';
+import 'package:dsh_app/state/account_state.dart';
 import 'package:dsh_app/state/connection_state.dart';
 import 'package:dsh_app/state/settings_state.dart';
 import 'package:dsh_app/state/provider_keys.dart';
@@ -243,6 +245,106 @@ void main() {
       c.dispose();
     }
   });
+  test('ready failure before key completion keeps the original provider future pending', () async {
+    final client = _Client();
+    final c = container(key: 'fake-key', connector: ({required baseUri, required token}) async => client);
+    final sub = c.listen(localConnectionProvider, (_, _) {});
+    var completed = false;
+    final failure = const DshTransportException('ready failed before key');
+    final result = c.read(localConnectionProvider.future);
+    final observed = result.then<Object?>((value) {
+      completed = true;
+      return value;
+    }, onError: (Object error, StackTrace stack) {
+      completed = true;
+      return error;
+    });
+    try {
+      await client.keyEntered.future;
+      client.mux.result.completeError(failure);
+      await c.pump();
+      expect(client.closed, isTrue);
+      expect(completed, isFalse);
+      expect(c.read(localConnectionProvider).isLoading, isTrue);
+      client.keyRelease.complete();
+      expect(await observed, same(failure));
+      expect(c.read(localConnectionProvider).value, isNull);
+    } finally {
+      if (!client.keyRelease.isCompleted) client.keyRelease.complete();
+      sub.close();
+      c.dispose();
+    }
+  });
+
+  test('ready failure takes the closed client away from its consumers', () async {
+    final client = _Client();
+    final c = container(connector: ({required baseUri, required token}) async => client);
+    final events = c.listen(localHostEventsProvider, (_, _) {});
+    final account = c.listen(accountApiProvider, (_, _) {});
+    try {
+      await connected(c);
+      expect(events.read(), isNotNull);
+      expect(account.read(), isA<DshAccountApi>());
+      client.mux.result.completeError(const DshTransportException('ready failed'));
+      await failed(c);
+      await c.pump();
+      expect(client.closed, isTrue);
+      expect(c.read(localConnectionProvider).value, isNull);
+      expect(account.read(), isNull);
+      expect(events.read(), isNull);
+    } finally {
+      events.close();
+      account.close();
+      c.dispose();
+    }
+  });
+
+  test('default retry hides failed value throughout reconnect and publishes only the new client', () async {
+    final first = _Client(), second = _Client();
+    final entered = Completer<void>(), release = Completer<_Client>();
+    var calls = 0;
+    final c = container(
+      retry: null,
+      connector: ({required baseUri, required token}) async {
+        if (++calls == 1) return first;
+        entered.complete();
+        return release.future;
+      },
+    );
+    final account = c.listen(accountApiProvider, (_, _) {});
+    final events = c.listen(localHostEventsProvider, (_, _) {});
+    try {
+      await connected(c);
+      final retrying = nextState(c, (s) => s, (s) => s.hasError && s.isLoading);
+      first.mux.result.completeError(const DshTransportException('temporary ready failure'));
+      final afterFailure = await retrying;
+      final failedAccount = account.read();
+      await entered.future.timeout(const Duration(seconds: 3));
+      final duringReconnect = c.read(localConnectionProvider);
+      final pendingAccount = account.read();
+      final pendingEvents = events.read();
+      release.complete(second);
+      final fresh = await nextState(c, (s) => s.requireValue!, (s) => identical(s.asData?.value?.client, second));
+      second.mux.result.complete(const MuxGeneration(1, 'fixture', '/tmp'));
+      await c.pump();
+      expect(fresh.client, same(second));
+      expect(calls, 2);
+      expect(first.closed, isTrue);
+      expect(second.closed, isFalse);
+      expect((account.read() as DshAccountApi).client, same(second));
+      expect(afterFailure.value, isNull);
+      expect(duringReconnect.value, isNull);
+      expect(failedAccount, isNull);
+      expect(pendingAccount, isNull);
+      expect(pendingEvents, isNull);
+    } finally {
+      if (!release.isCompleted) release.complete(second);
+      account.close();
+      events.close();
+      c.dispose();
+    }
+  });
+
   test('old ready failure after rebuild never replaces or closes the new client', () async {
     final old = _Client(), current = _Client();
     var calls = 0;

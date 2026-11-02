@@ -3233,6 +3233,15 @@ class L10nZh extends L10n {
   String get chatUnsent => '未发送';
 
   @override
+  String get chatFailedSubmission => '未送达 · 已保留';
+
+  @override
+  String get chatEditFailedSubmission => '编辑后重发';
+
+  @override
+  String get chatErrReasoningEffortUnsupported => '当前模型不支持此推理档位，请调整档位或换模型';
+
+  @override
   String get chatSteerNextStep => '插话 · 下一步生效';
 
   @override
@@ -8814,7 +8823,10 @@ class L10nZh extends L10n {
   String get phoneDndRootWaiting => '正在等待 root 授权，请在 root 管理器的弹窗里选择。';
 
   @override
-  String get phoneDndRootConnected => 'root 已连接。断开后要回到这里再选一次，DSH Go 不会自己重新申请。';
+  String get phoneDndRootConnected => 'root 已连接。断开后要回到这里再选一次；打开上面的「保持 root 通道」，DSH Go 才会自己再去申请。';
+
+  @override
+  String get phoneDndRootConnectedKept => 'root 已连接。断开后 DSH Go 会自己向 root 管理器再次申请。';
 
   @override
   String get phoneDndRootRetry => '重新申请 root 授权';
@@ -9862,7 +9874,49 @@ class L10nZh extends L10n {
 
   @override
   String get phonePrivilegedRootRiskBody =>
-      'root 管理器（Magisk、KernelSU 或 APatch）会弹窗问你。允许后，DSH Go 以 root 运行自己的后台服务；连接断开后不会自己重新申请。';
+      'root 管理器（Magisk、KernelSU 或 APatch）会弹窗问你。允许后，DSH Go 以 root 运行自己的后台服务；只有打开「保持 root 通道」，断开或重启后才会自己再去申请。';
+
+  @override
+  String phoneKeepTitle(String mode) {
+    String _temp0 = intl.Intl.selectLogic(mode, {
+      'shizuku': '保持 Shizuku 通道',
+      'sui': '保持 Sui 通道',
+      'root': '保持 root 通道',
+      'adb': '保持自连 ADB 通道',
+      'other': '保持这个通道',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String get phoneKeepRootDescription => '断开、重开 App 或重启手机后，DSH Go 会自己再向 root 管理器申请；给不给仍由管理器决定。';
+
+  @override
+  String get phoneKeepSharedDescription => '断开、重开 App 或重启手机后，DSH Go 用已有的授权自己连回去，不会替你申请授权。';
+
+  @override
+  String get phoneKeepAdbDescription => '断开、重开 App 或重启手机后，DSH Go 用已有的配对在 Wi‑Fi 下自己连回去；有「自动恢复无障碍」的权限时，还会试着打开一次无线调试。';
+
+  @override
+  String get phoneKeepRestoring => '正在重新连接';
+
+  @override
+  String get phoneKeepWaiting => '等通道可用后再连';
+
+  @override
+  String get phoneKeepWaitingService => '等所选服务运行后再连';
+
+  @override
+  String get phoneKeepWaitingPermission => '还没有授权；授权后会自己连上';
+
+  @override
+  String get phoneKeepWaitingNetwork => '等连上 Wi‑Fi 后再连';
+
+  @override
+  String get phoneKeepNotPaired => '还没有配对，请先完成无线调试配对';
+
+  @override
+  String get phoneKeepFailed => '没连上；下次打开 App 或开始操控时再试';
 
   @override
   String get phoneModeTitle => '选择确认方式';
@@ -15167,13 +15221,13 @@ class L10nZh extends L10n {
   String get stateChatStopSteered => '没能停下本轮，已作为插话发送';
 
   @override
-  String get stateChatTextOnlyModel => '当前模型只能读文字，图片已作为文件发给 AI。想让 AI 直接看图，请换成 V4.1 Flash';
+  String get stateChatTextOnlyModel => '当前模型未声明支持图片，已按文件发送。可换模型，或把自定义模型的输入类型设为「文本和图片」';
 
   @override
   String get stateAttachmentUploadFailed => '附件上传失败';
 
   @override
-  String get stateChatImageModelRequired => '当前模型看不了图片，换成 V4.1 Flash 再发';
+  String get stateChatImageModelRequired => '当前模型未声明支持图片。请换模型，或把自定义模型的输入类型设为「文本和图片」再发';
 
   @override
   String get stateSendFailed => '发送失败';
@@ -15844,8 +15898,11 @@ class L10nZh extends L10n {
 
   @override
   String stateAttachmentFileLimit(String name) {
-    return '文件「$name」超过 30 MB';
+    return '文件「$name」超过 200 MB';
   }
+
+  @override
+  String get stateAttachmentTotalLimit => '附件总大小超过 400 MB';
 
   @override
   String stateBotFinished(String name) {

@@ -190,7 +190,7 @@
       "0.2.1-rc.4": {
         "node_modules/@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js": {
           "before": "973dd78679b2661d6f492343bc22b124ae958aa597d3b36c698a2c650f909984",
-          "after": "bf3ac4eae2d0c7f474d71b3a1fb3bb265cb4ae287c4ab5e60fbc6aa9f8514d6a"
+          "after": "58dd786b79137604d4e330185d009a34337bd9b53efab59e32ed2cdfbcd3f73e"
         },
         "node_modules/@deepseek-ai/dsh-session/lib/index.js": {
           "before": "2f5dd07cb5c744a29abbb8003a8a4cefd9e582c6e2538074ca299a0ddd02a3bf",
@@ -223,6 +223,18 @@
         "node_modules/@deepseek-ai/dsh-storage-json/lib/index.js": {
           "before": "c1b83a1eb07cd6c5c2534038125dbeeb2e60a55deccd5827563379005240814f",
           "after": "6321a31f51f28ba948a01064fafd1ec473440a5feb4390041c64141098c0be04"
+        }
+      }
+    },
+    "zzzzzzz-input-recovery.diff": {
+      "0.2.1-rc.4": {
+        "node_modules/@deepseek-ai/dsh-agent-loop/lib/index.js": {
+          "before": "83e26a1b11be4d40532fd7ce6192490f5b595de4f795459c7b27723d56eb9711",
+          "after": "8dd7f5f0e0b7e875a9547cd16672827f1c9f493d9d849f53f189130e7b0a5ce1"
+        },
+        "node_modules/@deepseek-ai/dsh-api-session-controller/lib/index.js": {
+          "before": "f980fc8d8a21c7c93da3c77a4c511bd968702c815bf61cc709a6b1b7643daccd",
+          "after": "253e1339e3f7172aa6f272c5209f45cc69519a2509e9684242ee004c22a50f88"
         }
       }
     }

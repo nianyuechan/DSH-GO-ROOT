@@ -8,8 +8,8 @@ import android.os.Process
 import java.io.IOException
 
 /**
- * su runs only from [start], behind an explicit user action on the plugin's IO worker.
- * Tasks and [grantSecureSettings] only use what an earlier start left alive.
+ * su runs only from [start]: behind an explicit user action, or, once the person turned on
+ * keeping root, from the keeper. Tasks and [grantSecureSettings] only use what a start left alive.
  */
 class RootStarter(private val context: Context, private val onChanged: () -> Unit) {
     private val guard = Any()
@@ -17,6 +17,7 @@ class RootStarter(private val context: Context, private val onChanged: () -> Uni
     private val state = RootState()
     private var channel: RootChannel? = null
     private var pending: RootProcess? = null
+    private var pendingAllowed: (() -> Boolean)? = null
 
     fun status(): RootStatus = synchronized(guard) {
         discardDead()
@@ -29,21 +30,28 @@ class RootStarter(private val context: Context, private val onChanged: () -> Uni
     }
 
     /**
-     * [mayStart] (a quick read of the caller's UI ticket) is checked under the guard [disconnect]
+     * [mayStart] (a lock-free read of the caller's UI or explicit keep ticket) is checked under the guard [disconnect]
      * takes, so a cancel either comes first and nothing starts, or ends this start's ticket.
      */
     fun start(mayStart: () -> Boolean = { true }): PrivilegedChannel? = synchronized(startLock) start@{
         val ticket = synchronized(guard) {
             discardDead()
             channel?.let { return@start if (mayStart()) it else null }
-            state.beginIfAllowed(mayStart) ?: return@start null
+            (state.beginIfAllowed(mayStart) ?: return@start null).also { pendingAllowed = mayStart }
         }
         onChanged()
+        val stillAccepted = synchronized(guard) {
+            if (!state.current(ticket) || !mayStart()) {
+                if (state.current(ticket)) { pendingAllowed = null; state.disconnect() }
+                false
+            } else true
+        }
+        if (!stillAccepted) { onChanged(); return@start null }
         val info = context.applicationInfo
         val process = try {
             RootProcess.launch(RootCommands.appProcess(info.sourceDir, info.splitSourceDirs?.toList().orEmpty()))
         } catch (error: Exception) {
-            synchronized(guard) { state.finish(ticket, reason(error)) }
+            synchronized(guard) { if (state.current(ticket)) { pendingAllowed = null; state.finish(ticket, reason(error)) } }
             onChanged()
             return@start null
         }
@@ -62,7 +70,9 @@ class RootStarter(private val context: Context, private val onChanged: () -> Uni
             reason(error)
         }
         val result = synchronized(guard) {
+            if (state.current(ticket) && !mayStart()) state.disconnect()
             pending = null
+            pendingAllowed = null
             if (state.finish(ticket, failure) && failure == null) {
                 RootChannel(process) { channelFailed(process, it) }.also { channel = it }
             } else null
@@ -86,9 +96,24 @@ class RootStarter(private val context: Context, private val onChanged: () -> Uni
         return ok
     }
 
+    /** Revokes only a still-pending attempt whose own caller no longer wants it. */
+    fun cancelUnwantedPending() {
+        val cancelled = synchronized(guard) {
+            val allowed = pendingAllowed
+            if (allowed == null || allowed()) false else {
+                state.disconnect()
+                pendingAllowed = null
+                pending?.close(); pending = null
+                true
+            }
+        }
+        if (cancelled) onChanged()
+    }
+
     fun disconnect() {
         synchronized(guard) {
             state.disconnect()
+            pendingAllowed = null
             pending?.close(); pending = null
             channel?.close(); channel = null
         }

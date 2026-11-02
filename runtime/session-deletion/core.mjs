@@ -14,6 +14,7 @@ export function createDeletionSeam(storage, { acquire, parseGeneration, notFound
   const root = resolve(storage.root);
   const control = join(root, '.dsh-go-lifecycle');
   const pending = new Set();
+  const draining = new Map();
   const context = new AsyncLocalStorage();
   const slot = (id) => join(control, key(id));
   const marker = (id) => join(slot(id), 'deleted.json');
@@ -23,6 +24,12 @@ export function createDeletionSeam(storage, { acquire, parseGeneration, notFound
   };
   const assertAdmit = (id) => {
     if (pending.has(id) || deleted(id)) throw notFound(id);
+  };
+  // Only the already-owned handle may finish its buffered writes during teardown.
+  const assertPersist = (id, header) => {
+    const writer = draining.get(id);
+    if (writer !== undefined && writer.header === header && storage.tracker.writers.get(id) === writer && !deleted(id)) return;
+    assertAdmit(id);
   };
   const assertParent = (header) => {
     if (header.origin === 'subagent' && header.parentSession !== undefined) assertAdmit(header.parentSession);
@@ -99,14 +106,14 @@ export function createDeletionSeam(storage, { acquire, parseGeneration, notFound
     version: 1, pending, deleted, assertAdmit, assertParent, withMutation: mutation,
     // Global identity lease closes the alternate-cwd create race; the original directory
     // lease also excludes older runtime writers. Neither inode is ever unlinked.
-    async acquireWriter(id, dir) {
-      assertAdmit(id);
+    async acquireWriter(id, dir, header) {
+      assertPersist(id, header);
       const identity = await acquire(slot(id), id);
       let artifact;
       try {
-        assertAdmit(id);
+        assertPersist(id, header);
         artifact = await acquire(dir, id);
-        assertAdmit(id);
+        assertPersist(id, header);
         return { async release() { try { await artifact.release(); } finally { await identity.release(); } } };
       } catch (error) {
         try { await artifact?.release(); } finally { await identity.release(); }
@@ -117,23 +124,28 @@ export function createDeletionSeam(storage, { acquire, parseGeneration, notFound
       return mutation(async () => { if (!deleted(id)) return operation(); });
     },
     async materialize(header, operation) {
-      return mutation(async () => { assertAdmit(header.id); assertParent(header); return operation(); });
+      return mutation(async () => { assertPersist(header.id, header); assertParent(header); return operation(); });
     },
     async delete(id, hooks) {
       if (pending.has(id)) throw failure('writer-held');
       pending.add(id); // Synchronous fence precedes the first await and every prompt admission.
+      const writer = storage.tracker.writers.get(id);
+      if (writer) draining.set(id, writer);
       let identity;
       let artifact;
       let claimed = false;
       try {
-        const retry = deleted(id);
-        if (!retry) {
-          const live = storage.ctx.get('sessions')?.list() ?? [];
-          const corpus = [...await storage.list(), ...live.map((session) => ({ header: session.header }))];
-          if (corpus.some(({ header }) => header.id === id && (header.origin === 'subagent' || (header.delegationDepth ?? 0) > 0)
-            || header.origin === 'subagent' && header.parentSession === id)) throw failure('session-related');
-          await hooks.prepare();
-        }
+        let retry;
+        try {
+          retry = deleted(id);
+          if (!retry) {
+            const live = storage.ctx.get('sessions')?.list() ?? [];
+            const corpus = [...await storage.list(), ...live.map((session) => ({ header: session.header }))];
+            if (corpus.some(({ header }) => header.id === id && (header.origin === 'subagent' || (header.delegationDepth ?? 0) > 0)
+              || header.origin === 'subagent' && header.parentSession === id)) throw failure('session-related');
+            await hooks.prepare();
+          }
+        } finally { draining.delete(id); }
         if (storage.ctx.get('sessions')?.get(id) !== undefined) throw failure('writer-held');
         storage.tracker.claimWrite(id);
         claimed = true;

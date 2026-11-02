@@ -29,6 +29,7 @@ let corpus;
 let taskRows;
 let storedEvents;
 let cleanups;
+let writers;
 
 function storage() {
   return {
@@ -39,7 +40,7 @@ function storage() {
         : undefined),
       emit: () => {},
     },
-    tracker: { claimWrite() {}, releaseClaim() {} },
+    tracker: { writers, claimWrite() {}, releaseClaim() {} },
     coldLogMemo: new Map(),
     migrationPreparations: new Map(),
     async findLog(id) {
@@ -76,6 +77,7 @@ beforeEach(async () => {
   taskRows = false;
   storedEvents = [];
   cleanups = 0;
+  writers = new Map();
   seam = createDeletionSeam(storage(), { acquire, parseGeneration, notFound });
   await mkdir(join(root, 'aa', 's1'), { recursive: true });
   await writeFile(join(root, 'aa', 's1', 'session.jsonl'), '{}\n');
@@ -196,4 +198,53 @@ test('a deletion fence held while another writer owns the directory fails withou
   await lease.release();
   await seam.delete('s1', hooks());
   assert.equal(seam.deleted('s1'), true);
+});
+
+test('only the captured writer header can drain while deletion admission stays closed', async () => {
+  const writer = { header };
+  writers.set('s1', writer);
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let entered;
+  const ready = new Promise((resolve) => { entered = resolve; });
+  const deleting = seam.delete('s1', { ...hooks(), prepare: async () => {
+    entered();
+    await gate;
+    writers.delete('s1');
+  } });
+  await ready;
+  assert.throws(() => seam.assertAdmit('s1'), (e) => e.code === 'not-found');
+  await assert.rejects(seam.materialize({ ...header }, async () => {}), (e) => e.code === 'not-found');
+  await assert.rejects(seam.acquireWriter('s1', directory('s1')), (e) => e.code === 'not-found');
+  await assert.rejects(seam.acquireWriter('s1', directory('s1'), { ...header }), (e) => e.code === 'not-found');
+  const lease = await seam.acquireWriter('s1', directory('s1'), header);
+  await seam.materialize(header, async () => {});
+  await lease.release();
+  writers.delete('s1');
+  await assert.rejects(seam.materialize(header, async () => {}), (e) => e.code === 'not-found');
+  release();
+  await deleting;
+  assert.equal(seam.deleted('s1'), true);
+  writers.set('s1', writer);
+  await assert.rejects(seam.materialize(header, async () => {}), (e) => e.code === 'not-found');
+});
+
+test('prepare failure clears the captured drain allowance and deletion can retry', async () => {
+  writers.set('s1', { header });
+  await assert.rejects(seam.delete('s1', { ...hooks(), prepare: async () => {
+    await seam.materialize(header, async () => {});
+    throw new Error('prepare failed');
+  } }), /prepare failed/);
+  assert.equal(seam.pending.has('s1'), false);
+  assert.equal(seam.deleted('s1'), false);
+  await seam.delete('s1', hooks());
+  assert.equal(seam.deleted('s1'), true);
+});
+
+test('a constructing claim does not gain a drain allowance', async () => {
+  writers.set('s1', null);
+  await seam.delete('s1', { ...hooks(), prepare: async () => {
+    await assert.rejects(seam.materialize(header, async () => {}), (e) => e.code === 'not-found');
+    await assert.rejects(seam.acquireWriter('s1', directory('s1'), header), (e) => e.code === 'not-found');
+  } });
 });

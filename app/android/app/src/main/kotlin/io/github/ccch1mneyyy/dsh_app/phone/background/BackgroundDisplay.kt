@@ -111,6 +111,10 @@ class BackgroundDisplay(
     override fun perform(action: PhoneAction): ActionResult {
         // l10n:keep agent screen protocol
         val pkg = currentPackage ?: return ActionResult(false, "后台屏还没有打开应用")
+        if (action is PhoneAction.Key && action.key != PhoneAction.GlobalKey.BACK) {
+            // l10n:keep agent screen protocol
+            return ActionResult(false, "后台屏不支持该系统键，未执行；请用返回或打开指定应用")
+        }
         val request = Bundle().apply {
             putString(Proto.OWNER, "task")
             putString(Proto.PKG, pkg)
@@ -136,14 +140,8 @@ class BackgroundDisplay(
                 request.putString(Proto.DIR, action.direction.name.lowercase())
             }
             is PhoneAction.Key -> {
-                val dir = when (action.key) {
-                    PhoneAction.GlobalKey.BACK -> "back"
-                    PhoneAction.GlobalKey.HOME -> "home"
-                    // l10n:keep agent screen protocol
-                    else -> return ActionResult(false, "后台屏不支持该全局键，请用返回或主页")
-                }
                 request.putString(Proto.OP, Proto.OP_KEY)
-                request.putString(Proto.DIR, dir)
+                request.putString(Proto.DIR, "back")
             }
             // l10n:keep agent screen protocol
             is PhoneAction.TapXY -> return ActionResult(false, "后台屏按元素编号操作，不用坐标")

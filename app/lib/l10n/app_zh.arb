@@ -2033,6 +2033,9 @@
   "chatChats": "对话列表",
   "chatViewChatDetails": "查看对话详情",
   "chatUnsent": "未发送",
+  "chatFailedSubmission": "未送达 · 已保留",
+  "chatEditFailedSubmission": "编辑后重发",
+  "chatErrReasoningEffortUnsupported": "当前模型不支持此推理档位，请调整档位或换模型",
   "chatSteerNextStep": "插话 · 下一步生效",
   "chatQueuedAfterTurn": "排队中 · 本轮结束后发送",
   "chatSteering": "插话中",
@@ -5474,7 +5477,8 @@
   "phoneDndSuiAllSet": "Sui 这边准备好了。",
   "phoneDndSuiPermissionFailed": "没能请求 Sui 授权。确认 Sui 模块已启用后再试。",
   "phoneDndRootWaiting": "正在等待 root 授权，请在 root 管理器的弹窗里选择。",
-  "phoneDndRootConnected": "root 已连接。断开后要回到这里再选一次，DSH Go 不会自己重新申请。",
+  "phoneDndRootConnected": "root 已连接。断开后要回到这里再选一次；打开上面的「保持 root 通道」，DSH Go 才会自己再去申请。",
+  "phoneDndRootConnectedKept": "root 已连接。断开后 DSH Go 会自己向 root 管理器再次申请。",
   "phoneDndRootRetry": "重新申请 root 授权",
   "phoneDndInstallShizuku": "先装 Shizuku（免费、开源）。已经在用冰箱、黑阈这类工具的话，多半已经装了。",
   "phoneDndOpenShizukuSite": "打开 Shizuku 官网",
@@ -6020,7 +6024,25 @@
   "phonePrivilegedGrantSuiPermission": "先授权 Sui，再授予权限",
   "phonePrivilegedSuggested": "建议",
   "phonePrivilegedRootRiskTitle": "给 DSH Go root 权限？",
-  "phonePrivilegedRootRiskBody": "root 管理器（Magisk、KernelSU 或 APatch）会弹窗问你。允许后，DSH Go 以 root 运行自己的后台服务；连接断开后不会自己重新申请。",
+  "phonePrivilegedRootRiskBody": "root 管理器（Magisk、KernelSU 或 APatch）会弹窗问你。允许后，DSH Go 以 root 运行自己的后台服务；只有打开「保持 root 通道」，断开或重启后才会自己再去申请。",
+  "phoneKeepTitle": "{mode, select, shizuku{保持 Shizuku 通道} sui{保持 Sui 通道} root{保持 root 通道} adb{保持自连 ADB 通道} other{保持这个通道}}",
+  "@phoneKeepTitle": {
+    "placeholders": {
+      "mode": {
+        "type": "String"
+      }
+    }
+  },
+  "phoneKeepRootDescription": "断开、重开 App 或重启手机后，DSH Go 会自己再向 root 管理器申请；给不给仍由管理器决定。",
+  "phoneKeepSharedDescription": "断开、重开 App 或重启手机后，DSH Go 用已有的授权自己连回去，不会替你申请授权。",
+  "phoneKeepAdbDescription": "断开、重开 App 或重启手机后，DSH Go 用已有的配对在 Wi‑Fi 下自己连回去；有「自动恢复无障碍」的权限时，还会试着打开一次无线调试。",
+  "phoneKeepRestoring": "正在重新连接",
+  "phoneKeepWaiting": "等通道可用后再连",
+  "phoneKeepWaitingService": "等所选服务运行后再连",
+  "phoneKeepWaitingPermission": "还没有授权；授权后会自己连上",
+  "phoneKeepWaitingNetwork": "等连上 Wi‑Fi 后再连",
+  "phoneKeepNotPaired": "还没有配对，请先完成无线调试配对",
+  "phoneKeepFailed": "没连上；下次打开 App 或开始操控时再试",
   "phoneModeTitle": "选择确认方式",
   "phoneModeMessage": "随时可在设置里更改",
   "phoneModeAsk": "关键步骤先问我",
@@ -9498,9 +9520,9 @@
   "stateCommandMissing": "没有这个指令",
   "stateCommandFailed": "指令没有执行",
   "stateChatStopSteered": "没能停下本轮，已作为插话发送",
-  "stateChatTextOnlyModel": "当前模型只能读文字，图片已作为文件发给 AI。想让 AI 直接看图，请换成 V4.1 Flash",
+  "stateChatTextOnlyModel": "当前模型未声明支持图片，已按文件发送。可换模型，或把自定义模型的输入类型设为「文本和图片」",
   "stateAttachmentUploadFailed": "附件上传失败",
-  "stateChatImageModelRequired": "当前模型看不了图片，换成 V4.1 Flash 再发",
+  "stateChatImageModelRequired": "当前模型未声明支持图片。请换模型，或把自定义模型的输入类型设为「文本和图片」再发",
   "stateSendFailed": "发送失败",
   "stateChatStopFailed": "没能停下，再试一次",
   "stateChatTurnEnded": "这一轮已经结束，消息会作为新一轮发送",
@@ -9837,7 +9859,7 @@
       }
     }
   },
-  "stateAttachmentFileLimit": "文件「{name}」超过 30 MB",
+  "stateAttachmentFileLimit": "文件「{name}」超过 200 MB",
   "@stateAttachmentFileLimit": {
     "placeholders": {
       "name": {
@@ -9845,6 +9867,7 @@
       }
     }
   },
+  "stateAttachmentTotalLimit": "附件总大小超过 400 MB",
   "stateBotFinished": "{name} 完成了工作",
   "@stateBotFinished": {
     "placeholders": {

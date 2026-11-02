@@ -1,6 +1,6 @@
 # 手机特权通道：Shizuku、Sui、root 与自配对 ADB
 
-> 第十二波，2026-11-01；基于归档声明 dbfe2a3 的 R1/R2/R3 组合及特权通道约定 v1。本文描述原生接口、Dart 解析和本机页面接入要求。**所有下列设备矩阵均尚未实测**；源码核验、JVM 测试及 Android API 编译不等于设备验收。
+> 第十二波，2026-11-01；R1/R2/R3 已进入公开基底 ca3c420，本文补充 W12-P1 的显式保持设置。原生接口与 Dart 状态约定见 [特权通道保持](privileged-keep.md)。**所有下列设备矩阵均尚未实测**；源码核验、JVM 测试及 Android API 编译不等于设备验收。
 
 ## 1. 面向谁，解决什么
 
@@ -11,7 +11,7 @@
 | off | 暂不使用不打扰模式 | 无特权启动 | 关闭后台通道；不自动改选推荐项 |
 | shizuku | 使用 Shizuku App 的用户；兼容旧客户端 | 共享 API 存活并获用户授权 | 按接口可用性判断，不仅检查 App 包名 |
 | sui | 装有 Sui 模块的 Magisk / KernelSU 用户 | Sui 已向本 App 提供共享 Shizuku API，且授权允许 | 不要求安装 Shizuku App；来源必须实际为 Sui |
-| root | 有 Magisk / KernelSU / APatch，愿意明确授予本 App root 的用户 | 用户主动执行准备动作，真实服务 probe 验证 uid=0 和协议版本 | 启动、读状态、任务重连不执行 su；掉线后需再次主动准备 |
+| root | 有 Magisk / KernelSU / APatch，愿意明确授予本 App root 的用户 | 用户主动准备，或明确开启「保持 root 通道」；服务 probe 验证 uid=0 和协议版本 | 默认不自动 su；仅显式保持开启后，恢复事件可重新请求管理器 |
 | adb | 不使用上述方案，能够开启无线调试的用户 | 自配对无线 ADB、有效配对材料和可连接的 adbd | 继续已有配对与发现流程；同样启动现有特权服务 |
 
 Sui 和 Shizuku 共用现有 `ShizukuStarter` / Binder UserService。root 和 ADB 都启动 `PrivilegedDisplayMain`，用同一套 Bundle/Frames 请求及 `PrivilegedDisplayCore`，没有另造一套操控语义。root 使用私有标准输入/输出管道，stderr 持续消费并丢弃，不把 manager 原始诊断作为 App 提示。
@@ -22,7 +22,7 @@ Sui 和 Shizuku 共用现有 `ShizukuStarter` / Binder UserService。root 和 AD
 
 1. 当前已经就绪的选择。
 2. 已存活且已授权的共享 API，名称取实际来源 sui / shizuku。
-3. 本会话用户已主动选过、仍连接的 root。
+3. 用户明确准备过或按有效保持设置恢复、仍连接的 root。
 4. 已配对且无线调试未明确关闭的 ADB。
 5. 存活但仍需授权的共享 API。
 6. off。
@@ -56,12 +56,13 @@ root 实际就绪、真实 reason 为 null 时，旧 reason 才提示使用新�
 | privileged 字段 | 类型 | 含义 |
 | --- | --- | --- |
 | v | integer 1 | 协议版本 |
-| mode | 五模式之一 | 本会话选择，不是推荐 |
+| mode | 五模式之一 | 当前选择；可来自本次明确操作或已保存的保持选择，不是推荐 |
 | ready / reason | boolean / string或null | 当前尝试后台屏的可用性与本地化原因 |
 | supportedModes | string[] | 实现认识的模式；不代表用户授权或 ROM gate 已验证 |
 | recommendedMode | 五模式之一 | 只读建议 |
 | grantPath | granted / shizuku / shizukuPermission / sui / suiPermission / root / adb / setup | 自动恢复无障碍页面下一步动作 |
-| rootSelected | boolean | 本会话用户明确准备过root、尚未切换/关闭 |
+| rootSelected | boolean | 明确准备过 root，或从有效的保持 root 设置恢复；尚未切换/关闭 |
+| keep | object，可缺省 | 显式保持意图、恢复阶段和固定原因；缺省为关闭，connected 不证明显示/输入就绪 |
 
 `ready` 不应翻译成“所有设备能力已经验证”：gate 明确失败时会拒绝，但尚未获得 gate 结果的 null 与通过 true 不同。实际选择动作会尝试现有显示/输入 gate；只有相应观察成立才能在验收记录中写成功。
 
@@ -71,15 +72,15 @@ Dart 保留原 `PhoneBackgroundMode` 三值，避免旧页面 exhaustive switch 
 
 ## 4. 首次 su、队列取消与已接纳边界
 
-root 的首次执行入口只有明确用户动作：`setBackgroundMode(root)`，或者独立的 `prepareRoot()`。`RootStarter` 构造、status、connect、页面读取、推荐计算和任务重连均不执行 su。一次准备直接启动服务并用现有 probe 同时确认 OK、uid=0、revision匹配，不额外执行一次 su id。
+root 的执行入口是用户明确调用 setBackgroundMode(root)、prepareRoot()，或先明确开启「保持 root 通道」后由恢复事件调用。默认保持关闭；旧 mode、rootSelected、WSS 权限均不迁移成保持授权。RootStarter 构造、status、只读 connect、页面读取和推荐计算不执行 su。恢复只以 OP_PROBE 核对 uid=0 和协议版本，不自动执行显示/输入 gate；真实任务仍沿原有流程处理显示与输入。
 
 root 命令固定为三个 argv：su、-c、一个完整 command 字符串。共享 `PrivilegedCommands` 仅使用 OS ApplicationInfo 提供的 APK 路径构造安全引用的 classpath，Main 类与可执行程序固定；授予通过已连接 root 进程的既有权限 RPC，包名和权限固定，userId来自 App UID。没有用户/网络任意命令入口。
 
-PhonePlugin 在主线程收到关闭总开关、选择off/别的通道时，递增 `PrivilegedActionGate` 代际并取消root连接；engine detach 由 `attached=false` 让排队动作失效，同样取消root连接。IO队列在执行前检查attached与ticket；`RootStarter.start(mayStart)` 又在与disconnect共用的短guard内检查门禁并建立启动代际，填补“调用者检查通过、UI取消、之后才begin”的窗口。等待启动锁后仍会重新检查；旧动作不能借已有连接返回过期成功。接纳之后只看启动代际：取消一律经 disconnect，使代际失效并关闭待定进程，不再逐步重查门禁。阻塞启动/读写不占该guard，不让UI等30秒才取消。
+PhonePlugin 在主线程收到总开关关闭、切换通道或关闭保持时先撤销相应意图代际，再由独立控制队列保存设置；控制与状态读取不排在阻塞的恢复 IO 后。旧 Flutter engine detach 使旧 UI 动作失效，只取消该动作尚未发布的 root 启动，保留健康手动连接及有效保持恢复。RootStarter 在短 guard 内检查 mayStart 并建立启动代际，等待和发布连接前再次核对；阻塞启动/读写不占 guard。发布成功后的关闭保持只禁止以后恢复，不断开健康连接；切换通道或关闭手机操控仍按原有断开规则处理。
 
-此处的“接纳”是锁内确认动作仍有效、分配启动代际的线性化时点。未接纳的旧动作不得首次su；已经接纳并开始执行的操作按现有关闭管道/销毁直接子进程语义处理。**不承诺撤回manager已收到的授权请求，也不承诺撤销已经完成的权限授予。** 多次轮询不能被解释成再次授权。
+短 guard 内允许启动只是启动接纳点，连接成功的线性化点是同一 guard 内最后一次 mayStart 校验与 ready 发布。取消仅清理失效 pending；迟到失败只清理自己捕获的 channel，不能全局关闭之后建立的新连接。**不承诺撤回 manager 已收到的授权请求，也不承诺撤销已经完成的权限授予。** 多次轮询不能被解释成再次授权；保持恢复不会重放任务或授予动作。
 
-App策略上限是启动30秒、单次协议操作30秒。授予权限复用已连接 root 进程，也沿用协议操作30秒预算（含排队），不再另起独立su进程及其原10秒等待；超时会退役共享root连接。这些数值不是上游授权倒计时。超时/取消会使当前连接不可继续使用，后续root尝试由用户重新触发。stderr不用于猜测“拒绝授权”；未知失败统一为固定原因。
+App策略上限是启动30秒、单次协议操作30秒。授予权限复用已连接 root 进程，也沿用协议操作30秒预算（含排队），不再另起独立su进程及其原10秒等待；超时会退役共享root连接。这些数值不是上游授权倒计时。失败使相应连接失效；保持关闭时后续root尝试由用户重新触发，保持开启时由后续恢复事件尝试。stderr不用于猜测“拒绝授权”；未知失败统一为固定原因。
 
 ## 5. 失败时用户看到什么
 
@@ -94,9 +95,9 @@ App策略上限是启动30秒、单次协议操作30秒。授予权限复用已�
 | rootIdentityMismatch | root进程身份或协议不匹配 | 不接受uid非0或旧协议服务 |
 | rootTimeout | root授权或通信超时 | 明确用户重试；不自动重放动作 |
 | rootCancelled | root启动已取消 | 保持当前用户选择结果 |
-| rootDisconnected | root通道已断开 | 再次主动选择/准备 |
+| rootDisconnected | root通道已断开 | 保持开启时等待恢复事件，否则再次主动选择/准备 |
 | rootGrantFailed | 未能授予自动恢复所需权限 | 检查管理器授权，再主动授予并核验实际权限 |
-| Android<14或显示/输入gate失败 | Android版本要求 / 此系统不支持 / 输入注入被拒绝 | 不假装ready，不改用主屏完成后台操作 |
+| Android<14或显示/输入gate失败 | Android版本要求 / 此系统不支持 / 未能确认后台屏输入结果 | 不假装ready，不改用主屏完成后台操作 |
 | 已排队动作过期 | 通道选择已取消 | 忽略旧结果，刷新当前状态 |
 
 页面采用现有中英文词条与组件。原生根错误在values/values-zh的i18n_strings.xml，新增页面词条在phone_background_{zh,en}.arb；本文不要求页面直出未经约束的su原文。
@@ -117,19 +118,19 @@ Sui与Shizuku共享同一starter。选择sui后，旧兼容授予路径仍可能
 
 ## 7. 关闭、恢复与会话生命周期
 
-- 选择off：释放当前后台任务和显示、断开各通道，mode=off、rootSelected=false，清空gate缓存。
-- 切换为另一通道：清旧任务/连接后才尝试新选择；root失效不自动切身份。
-- 手机操控总开关关闭：主线程先使旧root意图过期并关闭root；IO处理总开关并将后台模式设off。WSS已经授予的权限不主动撤销，A11yKeeper依据总开关停止恢复；不能把保留系统permission误读为仍在自动恢复。
+- 选择 off：先使保持意图过期；保存关闭与原有任务/显示/通道释放各按对应队列完成，成功保存才可称持久关闭。mode=off、rootSelected=false，清空 gate 缓存。
+- 切换为另一通道：清除旧保持选择，按原有流程清旧任务/连接；新通道默认不保持，用户须单独开启。
+- 手机操控总开关关闭：先撤销保持与旧 UI 意图；保存关闭与既有任务/通道释放各按对应队列完成，成功保存才可称持久关闭。WSS 已授予的系统权限不主动撤销；A11yKeeper 依据总开关停止恢复。
 - 熄屏（`BackgroundControl.interrupt`）：停止任务、释放虚拟屏；Shizuku/Sui与ADB连接断开，下个任务自行重连；root的空闲进程保留，下个任务直接复用（`PrivilegedPathPolicy.closesOnInterrupt`），否则一次熄屏就要用户重新选择root。
-- 服务死亡、任务中断：沿用已有停止/资源释放路径；root丢失连接后任务只读connect，不能静默重新su。按实际触发路径观察资源是否释放，不把未开始的后台任务与已创建虚拟屏混同。
-- engine detach：使队列动作失效并关闭root，已经启动的外部授权按上一节边界处理。
-- App/进程重启：mode与rootSelected是本会话字段，不从磁盘自动恢复root授权尝试。已持有的WSS仍是系统permission事实，两者分开显示。
+- 服务死亡、任务中断：沿用原有停止/资源释放路径；未开启保持时 root 只读连接、不静默重新 su。开启保持后可按恢复事件重新请求同一身份，但不恢复旧任务或自动切换身份。
+- engine detach：旧 UI 队列动作失效；仅取消其失效 pending，保留健康的手动 root 连接及有效保持恢复。已进入管理器的授权无法撤回。
+- App/进程重启：只有有效的显式保持设置可恢复 mode/rootSelected，并触发传输恢复。没有保存保持时仍从 off 开始；系统 WSS 权限与通道连接分别记录。
 
 root/ADB入口先准备Looper再创建ActivityThread systemContext，之后进入既有服务。root使用原systemContext分支，shell身份才切换com.android.shell上下文。该源码结构已核对，但反射API、SELinux及厂商服务行为仍需真机验收。
 
 ## 8. 本机 UI 与 a11y 接入清单
 
-本波不修改`phone/a11y/`、`phone/PhoneControl.kt`、`app/lib/ui/chat/`，页面布局由本机实施。建议按以下顺序接入，不要求重做组件：
+本波不修改`phone/a11y/`、`phone/PhoneControl.kt`、`app/lib/ui/chat/`。页面按以下顺序接入，没有重做组件（保持开关见[特权通道保持](privileged-keep.md)第 7 节）：
 
 1. 通道控件读取supportedModes与effectiveMode；名称区分Sui/Root；旧三值页面继续使用旧enum，不在原exhaustive switch塞入未知值。新块不存在时只显示三种旧能力。
 2. 建议以文字提示展示recommendedMode；点击才调用setPrivilegedMode。程序化刷新、构建或状态同步触发的回调不得发选择或准备动作；用户主动点选控件产生的onChanged可以调用选择方法。
@@ -147,7 +148,7 @@ root/ADB入口先准备Looper再创建ActivityThread systemContext，之后进�
 - 旧原生（无 v1 块）只列 Shizuku 与自连 ADB，不出现 Sui / root、不出现建议。
 - **自动恢复无障碍**按 grantPath 写出路径（通过 Shizuku / Sui / root / 自连 ADB 授予，或先授权 Shizuku / Sui），root 路径附「通过已授权的 root 连接，只授予这一项权限」；无路径时在「配置…」下另给「申请 root 授权」（`prepareRoot`，同一提醒，不看 Android 14 门槛）；root 已选但断开时只给重新申请，不换别的路径。
 
-具体页面验收：只开设置页/搜索/前后台切换无root提示；点prepare一次才产生一次启动尝试；API33仍能独立准备；API34+选择root后gate才决定后台屏；prepare不改变原mode；来源改变的旧Sui按钮不授权错误来源；按off后等待中的旧结果不复活勾选；旧原生侧不发送prepareRoot；新原生root投影旧字段off/false，但断线/超时后的任务错误保留实际原因；Sui授WSS后当前共享后台服务不被解绑。
+具体页面验收：保持关闭时，只开设置页/搜索/前后台切换无root提示；点prepare一次才产生一次启动尝试；API33仍能独立准备；API34+选择root后gate才决定后台屏；prepare不改变原mode；来源改变的旧Sui按钮不授权错误来源；按off后等待中的旧结果不复活勾选；旧原生侧不发送prepareRoot；新原生root投影旧字段off/false，但断线/超时后的任务错误保留实际原因；Sui授WSS后当前共享后台服务不被解绑。
 
 ## 9. 真机矩阵与逐步可观察验收
 
@@ -171,19 +172,19 @@ root/ADB入口先准备Looper再创建ActivityThread systemContext，之后进�
 
 | 步骤 | 操作 | 可观察验收 |
 | --- | --- | --- |
-| V1 冷启动/只读 | 撤销或清楚记录既有授权，冷启App，打开设置、反复status/事件刷新 | 没有首次su、没有权限请求、没有自动选建议；root为unchecked/null |
-| V2 明确选择 | 用户点击通道及其授权按钮，或prepareRoot；分别允许、拒绝、超过App等待上限 | 只调用所选身份；Sui/manager自己的授权机制；失败固定原因，不猜stderr；无自动重试 |
+| V1 冷启动/只读 | 保持关闭，撤销或清楚记录既有授权，冷启App并反复读取状态 | 没有首次 su、没有权限请求、没有自动选择建议；root 为 unchecked/null |
+| V2 明确选择 | 保持关闭，点击通道/授权或 prepareRoot；分别允许、拒绝、超过等待上限 | 只调用所选身份，由 Sui/管理器处理授权；固定失败原因、不猜 stderr，不自动重试 |
 | V3 协议与gate | root验证probe；API34+选择后台模式并尝试显示/注入 | uid0与revision同时成立才接root；显示/输入不支持则ready=false，无主屏替代 |
 | V4 独立授予 | mode=off或保留其它mode时prepareRoot，再点授予；共享API也走一次 | mode不被prepare改变；actual WSS permission确认；共享Sui服务不被误解绑 |
 | V5 正常任务 | 启动一个普通、非敏感应用的后台任务，结束/主动交接 | 显示与任务owner匹配，正常结束释放资源，前台操作不受意外抢占 |
-| V6 失效 | 分开执行撤权、杀服务与锁屏，分别读状态并尝试后续任务 | 撤权/杀服务时确认实际断线，root任务不得隐式su，也不静默切身份；锁屏按当时task/driver路径分别记录任务停止、虚拟屏资源与连接状态，不断言每次锁屏都rootDisconnected；root实际断线后仅用户重新prepare可尝试恢复 |
-| V7 队列取消 | 阻塞IO队列后点root，再点off/关闭总开关；另测启动已接纳后取消 | 未接纳动作不su且不报告成功；已接纳动作有界结束、不复活连接；不宣称撤销已收到的外部授权 |
-| V8 自动恢复 | 获WSS后模拟无障碍断开，分别总开关开/关，重启App或升级 | 开时按既有退避恢复；关时不重加；重启不会自动root；已grant与root连接分开记录 |
+| V6 失效 | 分别撤权、杀服务、锁屏；再在保持开/关下启动新任务 | 关闭保持时 root 不隐式 su；开启时仅按恢复事件请求同一身份，不重放旧任务。锁屏资源按实际 task/driver 路径记录，不断言每次都断开 root |
+| V7 队列取消 | 阻塞 IO 队列后点 root，再点 off/关闭总开关；另测启动已接纳后取消 | 撤销意图后不迟到发布；不宣称撤回管理器请求。原预算与阻塞范围见保持约定，尚未收敛时继续占单一槽，不假定 OPEN/PROBE 有总截止 |
+| V8 自动恢复 | 获 WSS 后模拟无障碍断开，分别切总开关与保持设置，再重启 App | 无障碍按既有退避与总开关恢复；仅明确保持 root 才允许自动 su。已 grant、保持设置、传输连接、显示能力分别记录 |
 | V9 多用户/兼容 | 在个人及工作资料重复授予；旧/新Dart状态夹具对读 | permission目标正确；root旧投影off/false且仅就绪时显示兼容提示，失效时任务结果保留实际原因；Sui旧投影shizuku；旧原生无新动作 |
 
 ## 10. 验证证据与发布边界
 
-R1提供共享API来源纯函数测试及上游初始化证据；R2提供固定命令、纯状态/代际、实际JVM管道子进程与Android API adapter编译；R3提供原生选择/队列策略、Dart兼容解析与状态接线测试。每个交付包独立以dbfe2a3归档根应用，组合顺序R1→R2→R3，本文文档补丁可独立应用。不得把合成git基准误称原始提交历史。
+以下为 R1/R2/R3 的历史交付记录；当前 P1 基于 ca3c420，使用其独立补丁与精确哈希复核。R1提供共享API来源纯函数测试及上游初始化证据；R2提供固定命令、纯状态/代际、实际JVM管道子进程与Android API adapter编译；R3提供原生选择/队列策略、Dart兼容解析与状态接线测试。每个交付包独立以dbfe2a3归档根应用，组合顺序R1→R2→R3，本文文档补丁可独立应用。不得把合成git基准误称原始提交历史。
 
 复核报告中的PASS_SCOPED只覆盖其精确补丁hash与列明测试。上面的D1–D11、虚拟屏/输入/权限真机结果及本机页面接入均尚未完成。发布前按目标设备实际记录执行；没有设备结果时保留“未在真机核实”，不把文档矩阵勾成已通过。
 

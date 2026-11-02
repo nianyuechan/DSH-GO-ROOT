@@ -50,6 +50,8 @@ def transforms():
         '\t\treturn snapshots.filter(({ header }) => !this.dshGoDeletion.deleted(header.id));\n\t}')
     add('dsh-session-persistence-jsonl', '\t\treturn SessionWriteLease.acquire(dir, id);',
         '\t\treturn this.dshGoDeletion.acquireWriter(id, dir);')
+    add('dsh-session-persistence-jsonl', '\t\treturn this.acquireLease(header.id, header.cwd);',
+        '\t\treturn this.dshGoDeletion.acquireWriter(header.id, sessionDir(this.root, header.cwd, header.id), header);')
     add('dsh-session-persistence-jsonl', '\tasync materialize(meta, inheritedEventCount, events) {', '''\tasync materialize(meta, inheritedEventCount, events) {
 \t\treturn this.dshGoDeletion.materialize(meta, () => this.dshGoMaterialize(meta, inheritedEventCount, events));
 \t}
@@ -202,10 +204,6 @@ def transforms():
 \t\t\t}
 \t\t}
 \t\tconst write = writeAtomic''')
-    add('dsh-host-webserver', '\t\tconst configUnavailable = status === 503 && (pathname === "/dsh-go/v1/plugin-config" || pathname?.startsWith("/dsh-go/v1/plugin-config/"));',
-        '\t\tconst deletionUnavailable = status === 503 && (pathname === "/dsh-go/v1/sessions/delete" || pathname === "/dsh-go/v1/sessions/deletion");\n\t\tconst configUnavailable = deletionUnavailable || status === 503 && (pathname === "/dsh-go/v1/plugin-config" || pathname?.startsWith("/dsh-go/v1/plugin-config/"));')
-    add('dsh-host-webserver', 'configUnavailable ? JSON.stringify({ v: 1, code: "host-unavailable", message: "主机配置服务暂不可用，请稍后重试。" })',
-        'deletionUnavailable ? JSON.stringify({ error: { code: "unavailable", message: "Safe session deletion is unavailable." } }) : configUnavailable ? JSON.stringify({ v: 1, code: "host-unavailable", message: "主机配置服务暂不可用，请稍后重试。" })')
     return result
 
 

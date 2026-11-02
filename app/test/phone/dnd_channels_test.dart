@@ -1,7 +1,8 @@
 // 不打扰模式's channel picker against the versioned status block: what each
 // channel says about itself, that only an explicit tap picks one (root only
-// after its notice), that a failure shows its own reason, and that an old
-// native module keeps the three-way page.
+// after its notice), that a failure shows its own reason, that 保持 is the
+// in-use channel's own switch, and that an old native module keeps the
+// three-way page.
 
 import 'package:dsh_app/state/phone_state.dart';
 import 'package:dsh_app/ui/common/app_sheet.dart';
@@ -248,6 +249,41 @@ void main() {
     await open(tester, 'Sui');
     expect(find.text('改用 Sui'), findsOneWidget);
     expect(button(tester, '改用 Sui').onPressed, isNotNull);
+  });
+
+  testWidgets('保持 is off by default and only its switch writes it, for the channel in use', (tester) async {
+    final native = FakePhoneNative(
+      status: privilegedStatus(mode: 'root', ready: true, root: {'checked': true, 'connected': true}),
+    );
+    await pumpPhone(tester, const PhoneDndPage(), native: native);
+    final keep = find.widgetWithText(ListPageRow, '保持 root 通道');
+    expect(find.descendant(of: keep, matching: find.textContaining('给不给仍由管理器决定')), findsOneWidget);
+    expect(tester.widget<Switch>(find.descendant(of: keep, matching: find.byType(Switch))).value, isFalse);
+    expect(native.callsOf('setBackgroundKeep'), isEmpty);
+
+    await tester.tap(find.descendant(of: keep, matching: find.byType(Switch)));
+    await tester.pumpAndSettle();
+    expect(native.callsOf('setBackgroundKeep').map((c) => c.arguments), [
+      {'mode': 'root', 'enabled': true},
+    ]);
+    expect(acting(native), isEmpty);
+  });
+
+  testWidgets('with 保持 on, the line under it says how reconnecting goes', (tester) async {
+    await pumpPhone(
+      tester,
+      const PhoneDndPage(),
+      native: FakePhoneNative(
+        status: privilegedStatus(
+          mode: 'adb',
+          paired: true,
+          keep: {'enabled': true, 'mode': 'adb', 'phase': 'waiting', 'reasonCode': 'networkUnavailable'},
+        ),
+      ),
+    );
+    final keep = find.widgetWithText(ListPageRow, '保持自连 ADB 通道');
+    expect(find.descendant(of: keep, matching: find.text('等连上 Wi‑Fi 后再连')), findsOneWidget);
+    expect(tester.widget<Switch>(find.descendant(of: keep, matching: find.byType(Switch))).value, isTrue);
   });
 
   test('the main page line follows the channel actually in use', () {

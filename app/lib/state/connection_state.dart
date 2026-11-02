@@ -93,6 +93,11 @@ class LocalConnectionController extends AsyncNotifier<HostConnection?> {
         (_) {},
         onError: (Object error, StackTrace stack) {
           readyFailure = (error, stack);
+          // Error/retry states retain their previous value. Retire our published
+          // connection before closing it, without changing an unpublished build.
+          if (r.mounted && identical(state.value?.client, client)) {
+            state = const AsyncData(null);
+          }
           unawaited(client.close());
         },
       ),

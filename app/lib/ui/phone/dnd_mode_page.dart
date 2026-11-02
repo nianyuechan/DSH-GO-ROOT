@@ -57,8 +57,8 @@ bool _shizukuInstalled(ShizukuStatus s) => s.provider == 'shizuku' || (s.appInst
 /// each channel needs and why one isn't working.
 ///
 /// A row unfolds its channel; only the button inside picks it. Nothing here
-/// picks, authorizes or runs su on its own: not opening the page, not a status
-/// refresh, not the suggestion.
+/// picks, authorizes, keeps or runs su on its own: not opening the page, not a
+/// status refresh, not the suggestion.
 class PhoneDndPage extends ConsumerStatefulWidget {
   const PhoneDndPage({super.key});
 
@@ -197,6 +197,8 @@ class _PhoneDndPageState extends ConsumerState<PhoneDndPage> {
                 subtitle: bg.effectiveReady ? l10n.phoneReady : (waiting ? bg.effectiveReason : null),
                 trailing: TextButton(onPressed: _close, child: Text(l10n.commonClose)),
               ),
+              // Old native modules neither report nor save a keep choice.
+              if (bg.privileged != null) _keepRow(using, bg.keep),
             ],
           ),
           // The channel's own reason, whole: a failure never quietly becomes another channel.
@@ -222,11 +224,65 @@ class _PhoneDndPageState extends ConsumerState<PhoneDndPage> {
           margin: _groupMargin,
           title: l10n.phoneDndRequirements,
           children: [
-            BulletLines([l10n.phoneDndKeepUnlocked, l10n.phoneDndReactivate, l10n.phoneDndKeepDebugging]),
+            BulletLines([
+              l10n.phoneDndKeepUnlocked,
+              if (!bg.keep.enabled) l10n.phoneDndReactivate,
+              l10n.phoneDndKeepDebugging,
+            ]),
           ],
         ),
       ],
     );
+  }
+
+  /// 保持 for the channel in use, off until the person turns it on: this
+  /// switch is the only thing that writes it. The line under it says what
+  /// keeping means, or while on and not connected, how reconnecting goes.
+  Widget _keepRow(PhonePrivilegedMode mode, PhonePrivilegedKeepStatus keep) {
+    final l10n = context.l10n;
+    final (status, color) = keep.enabled ? _keepStatus(keep) : (null, null);
+    void toggle(bool on) => unawaited(_run(() => _phone.setBackgroundKeep(mode, on)));
+    return MergeSemantics(
+      child: ListPageRow(
+        // Lined up with 正在使用 above: one channel, one card.
+        leading: const SizedBox(),
+        title: l10n.phoneKeepTitle(mode.name),
+        titleMaxLines: 2,
+        subtitle:
+            status ??
+            switch (mode) {
+              PhonePrivilegedMode.root => l10n.phoneKeepRootDescription,
+              PhonePrivilegedMode.adb => l10n.phoneKeepAdbDescription,
+              _ => l10n.phoneKeepSharedDescription,
+            },
+        subtitleColor: color,
+        // What keeping means is the consent: never cut short.
+        subtitleMaxLines: 8,
+        onTap: _busy ? null : () => toggle(!keep.enabled),
+        trailing: Switch(value: keep.enabled, onChanged: _busy ? null : toggle),
+      ),
+    );
+  }
+
+  /// Native's own fixed reason codes; anything else is plain waiting.
+  (String?, Color?) _keepStatus(PhonePrivilegedKeepStatus keep) {
+    final l10n = context.l10n;
+    final accent = Theme.of(context).colorScheme.primary;
+    return switch (keep.phase) {
+      PhoneKeepPhase.restoring => (l10n.phoneKeepRestoring, accent),
+      PhoneKeepPhase.waiting => (
+        switch (keep.reasonCode) {
+          'serviceUnavailable' || 'providerChanged' => l10n.phoneKeepWaitingService,
+          'permissionRequired' => l10n.phoneKeepWaitingPermission,
+          'networkUnavailable' => l10n.phoneKeepWaitingNetwork,
+          'notPaired' => l10n.phoneKeepNotPaired,
+          _ => l10n.phoneKeepWaiting,
+        },
+        accent,
+      ),
+      PhoneKeepPhase.failed => (l10n.phoneKeepFailed, DshColors.of(context).warning),
+      _ => (null, null),
+    };
   }
 
   Widget _row(PhonePrivilegedMode mode, PhoneBackgroundStatus bg, {required bool open, required bool suggested}) {
@@ -384,7 +440,7 @@ class _PhoneDndPageState extends ConsumerState<PhoneDndPage> {
             : !using
             ? l10n.phonePrivilegedRootDescription
             : r.connected
-            ? l10n.phoneDndRootConnected
+            ? (bg.keep.enabled ? l10n.phoneDndRootConnectedKept : l10n.phoneDndRootConnected)
             : null,
         button: r.starting || (using && r.connected)
             ? null

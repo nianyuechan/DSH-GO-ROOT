@@ -69,6 +69,15 @@
  	}
  	/**
  	* Acquire the cross-process write lock for a materializing created session,
+@@ -2975,7 +2987,7 @@
+ 	*/
+ 	async acquireWriteLease(header) {
+ 		await this.rejectOppositeArtifact(header.cwd, header.id);
+-		return this.acquireLease(header.id, header.cwd);
++		return this.dshGoDeletion.acquireWriter(header.id, sessionDir(this.root, header.cwd, header.id), header);
+ 	}
+ 	/** Decode complete frames and retain complete JSONL records from a torn final frame. */
+ 	async readZstdPrefix(buffer, signal) {
 @@ -3124,7 +3136,7 @@
  		for (const outcome of headers) {
  			if (outcome.status === "rejected") throw outcome.reason;

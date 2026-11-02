@@ -22,5 +22,5 @@
   "phonePrivilegedGrantSuiPermission": "Authorize Sui, then grant",
   "phonePrivilegedSuggested": "Suggested",
   "phonePrivilegedRootRiskTitle": "Give DSH Go root access?",
-  "phonePrivilegedRootRiskBody": "Your root manager (Magisk, KernelSU or APatch) will ask you. If you allow it, DSH Go runs its own background service as root, and never asks again on its own after a disconnect."
+  "phonePrivilegedRootRiskBody": "Your root manager (Magisk, KernelSU or APatch) will ask you. If you allow it, DSH Go runs its own background service as root. It asks again on its own after a disconnect or restart only with “Keep root channel” on."
 }

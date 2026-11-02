@@ -395,11 +395,7 @@ class _ChatListState extends ConsumerState<ChatList> {
     final previousLength = _rows.length;
     final previousKeys = _index;
     final hadPending = _rows.any((r) => r is PendingRow);
-    _rows = _rowCache.update(
-      s,
-      foldTurns: foldTurns,
-      artifacts: artifacts,
-    );
+    _rows = _rowCache.update(s, foldTurns: foldTurns, artifacts: artifacts);
     _index = _rowCache.index;
     // 被插话切开的轮:前几片的摘要行(`tp<轮起点>@<插话>`)跟最后一片一起收。
     // 这一帧没建出来的(在屏幕外)不留到以后:翻回去时不该再播一遍。
@@ -677,7 +673,7 @@ class _ChatListState extends ConsumerState<ChatList> {
     if (prompt.isBackgroundTask) {
       return BackgroundTaskNotice(key: ValueKey((widget.sessionId, prompt.requestId, prompt.inboxId)), prompt: prompt);
     }
-    if (dshUiReplyChip(prompt.text) case final label?) {
+    if (dshUiReplyChip(prompt.text) case final label? when !prompt.failed) {
       return DshUiReplyChip(label: label, pending: true);
     }
     final chat = ref.read(chatProvider(widget.sessionId).notifier);
@@ -696,9 +692,10 @@ class _ChatListState extends ConsumerState<ChatList> {
     return UserBubble(
       text: prompt.text,
       attachments: prompt.attachments.isEmpty ? null : SentAttachments.pending(prompt.attachments),
-      pendingLabel: label,
-      pendingIcon: icon,
+      pendingLabel: prompt.failed ? appL10n.chatFailedSubmission : label,
+      pendingIcon: prompt.failed ? AppIcons.error : icon,
       pendingActions: [
+        if (prompt.failed && prompt.resendable) (appL10n.chatEditFailedSubmission, () => _editFailedSubmission(prompt)),
         if (canAct && prompt.resendable && widget.onSendNow != null)
           (_running ? appL10n.chatSendNow : appL10n.commonSend, () => widget.onSendNow!(prompt)),
         if (canAct && _running && prompt.slot == InboxSlot.nextTurn)
@@ -706,6 +703,58 @@ class _ChatListState extends ConsumerState<ChatList> {
         if (canAct && widget.onWithdraw != null) (appL10n.chatWithdraw, () => widget.onWithdraw!(prompt)),
       ],
     );
+  }
+
+  Future<void> _editFailedSubmission(PendingPrompt prompt) async {
+    final sessionId = widget.sessionId;
+    final client = ref.read(activeConnectionProvider).value?.client;
+    final generation = client?.mux.generation;
+    final readyNumber = client?.mux.lastReadyGenerationNumber;
+    var retired = false;
+    final connection = ref.listenManual(activeConnectionProvider.select((c) => c.value?.client), (_, next) {
+      if (!identical(next, client)) retired = true;
+    });
+    var text = prompt.text;
+    try {
+      final edited = await showDialog<String>(
+        context: context,
+        builder: (dialog) => AlertDialog(
+          title: Text(appL10n.chatEditFailedSubmission),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextFormField(
+                  initialValue: prompt.text,
+                  onChanged: (value) => text = value,
+                  autofocus: true,
+                  minLines: 2,
+                  maxLines: 8,
+                ),
+                if (prompt.attachments.isNotEmpty) SentAttachments.pending(prompt.attachments),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialog), child: Text(appL10n.commonCancel)),
+            TextButton(onPressed: () => Navigator.pop(dialog, text), child: Text(appL10n.commonSend)),
+          ],
+        ),
+      );
+      if (edited == null ||
+          !mounted ||
+          retired ||
+          widget.sessionId != sessionId ||
+          !identical(ref.read(activeConnectionProvider).value?.client, client) ||
+          !identical(client?.mux.generation, generation) ||
+          client?.mux.lastReadyGenerationNumber != readyNumber) {
+        return;
+      }
+      await ref.read(chatProvider(sessionId).notifier).retryFailed(prompt, edited);
+    } finally {
+      connection.close();
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -864,7 +913,7 @@ class _ChatListState extends ConsumerState<ChatList> {
   /// 更新),其余「换模型」。
   NoticeAction? _noticeAction(NoticeChatItem notice) {
     final s = ref.read(chatProvider(widget.sessionId));
-    if (s.running || s.pending.isNotEmpty) return null;
+    if (s.running) return null;
     final code = notice.failure?.code ?? '';
     final refused = notice.kind == 'error' && modelRefusalCodes.contains(code);
     final repeatable = switch (notice.kind) {
@@ -886,10 +935,16 @@ class _ChatListState extends ConsumerState<ChatList> {
       final switchModel = widget.onSwitchModel;
       return switchModel == null ? null : (label: appL10n.chatSwitchModel, onPressed: switchModel);
     }
+    if (s.pending.isNotEmpty) return null;
+    final turn = s.turns.where((turn) => turn.endSeq == notice.seq).firstOrNull;
+    if (turn == null) return null;
     UserChatItem? prompt;
     var worked = false;
     for (var i = at - 1; i >= 0 && prompt == null; i--) {
-      switch (s.items[i]) {
+      final item = s.items[i];
+      if (item is NoticeChatItem && item.kind != 'retry') break;
+      if (item is UserChatItem && item.seq < turn.startSeq) break;
+      switch (item) {
         case final UserChatItem item:
           prompt = item;
         case ToolChatItem():
@@ -900,10 +955,10 @@ class _ChatListState extends ConsumerState<ChatList> {
           break;
       }
     }
+    if (prompt == null) return null;
     final chat = ref.read(chatProvider(widget.sessionId).notifier);
     if (notice.kind == 'error' &&
         !worked &&
-        prompt != null &&
         prompt.images.isEmpty &&
         prompt.files.isEmpty &&
         prompt.text.trim().isNotEmpty) {

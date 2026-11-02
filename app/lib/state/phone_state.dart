@@ -209,6 +209,10 @@ class PhoneController extends Notifier<PhoneState> {
   Future<PhoneResult> setPrivilegedMode(PhonePrivilegedMode mode) =>
       _ifSupported(mode, () => _channel.setPrivilegedMode(mode));
 
+  /// Only an explicit keep choice; rebuilding or refreshing never writes it.
+  Future<PhoneResult> setBackgroundKeep(PhonePrivilegedMode mode, bool enabled) =>
+      _ifSupported(mode, () => _channel.setBackgroundKeep(mode, enabled));
+
   /// Only an explicit tap: refresh, build and status events never prepare root.
   Future<PhoneResult> prepareRoot() => _ifSupported(PhonePrivilegedMode.root, _channel.prepareRoot);
 

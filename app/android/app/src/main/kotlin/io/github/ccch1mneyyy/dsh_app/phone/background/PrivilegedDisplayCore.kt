@@ -20,6 +20,7 @@ import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
+import android.hardware.input.InputManager
 import android.media.ImageReader
 import android.os.Binder
 import android.os.Build
@@ -103,17 +104,17 @@ class PrivilegedDisplayCore(private val context: Context) {
             }
             synchronized(lock) { dispatch(op, request, response) }
             if (!response.containsKey(Proto.ERROR)) response.putBoolean(Proto.OK, true)
-        } catch (f: Fault) {
+        } catch (e: Throwable) {
             response.putBoolean(Proto.OK, false)
-            response.putString(Proto.ERROR, f.code)
-        } catch (_: SecurityException) {
-            response.putBoolean(Proto.OK, false)
-            response.putString(Proto.ERROR, "systemOperationDenied")
-        } catch (_: Throwable) {
-            response.putBoolean(Proto.OK, false)
-            response.putString(Proto.ERROR, "deviceUnavailable")
+            response.putString(Proto.ERROR, failureCode(e))
         }
         return response
+    }
+
+    private fun failureCode(e: Throwable): String = when (e) {
+        is Fault -> e.code
+        is SecurityException -> "systemOperationDenied"
+        else -> "deviceUnavailable"
     }
 
     private fun dispatch(op: String?, request: Bundle, response: Bundle) {
@@ -179,8 +180,9 @@ class PrivilegedDisplayCore(private val context: Context) {
         try {
             owner = "__gate__"
             createDisplay(Bundle().apply { putInt(Proto.SHORT_SIDE, 360); putInt(Proto.ASPECT_W, 9); putInt(Proto.ASPECT_H, 20) })
-            val injectOk = runCatching { injectTap(1, 1, false); true }.getOrDefault(false)
-            response.putBoolean(Proto.INJECT_OK, injectOk)
+            val injection = runCatching { injectTap(1, 1, false) }
+            response.putBoolean(Proto.INJECT_OK, injection.isSuccess)
+            injection.exceptionOrNull()?.let { response.putString(Proto.INJECT_ERROR, failureCode(it)) }
             response.putInt(Proto.DISPLAY_ID, displayId())
         } finally {
             releaseAll()
@@ -404,20 +406,25 @@ class PrivilegedDisplayCore(private val context: Context) {
         @Suppress("UNCHECKED_CAST")
         val all = invoke(automation, "getWindowsOnAllDisplays") as? SparseArray<List<AccessibilityWindowInfo>>
             ?: throw Fault("treeUnavailable")
-        val appWindow = all.get(displayId).orEmpty().firstOrNull {
+        val windows = all.get(displayId).orEmpty().filter {
             it.type == AccessibilityWindowInfo.TYPE_APPLICATION
-        } ?: throw Fault("treeUnavailable")
-        val root = appWindow.root ?: throw Fault("treeUnavailable")
-        val tree = TreeRead(targetId)
+        }
+        val roots = ArrayList<AccessibilityNodeInfo?>()
         try {
-            if (root.packageName?.toString() != pkg) throw Fault("displayTargetChanged")
-            walk(root, tree, 0, 600)
-            assignRegions(tree.elements)
-            return tree
-        } catch (e: Throwable) {
-            tree.target?.recycle()
-            throw e
-        } finally { root.recycle() }
+            for (window in windows) roots.add(window.root)
+            val selected = BackgroundTree.selectApplicationWindow(roots.map { it?.packageName?.toString() }, pkg)
+                ?: throw Fault(if (roots.firstOrNull() != null) "displayTargetChanged" else "treeUnavailable")
+            val tree = TreeRead(targetId)
+            tree.complete = selected.complete
+            try {
+                walk(roots[selected.index]!!, tree, 0, 600)
+                assignRegions(tree.elements)
+                return tree
+            } catch (e: Throwable) {
+                tree.target?.recycle()
+                throw e
+            }
+        } finally { roots.forEach { it?.recycle() } }
     }
 
     private fun walk(node: AccessibilityNodeInfo?, tree: TreeRead, indent: Int, budget: Int) {
@@ -668,14 +675,20 @@ class PrivilegedDisplayCore(private val context: Context) {
     @SuppressLint("BlockedPrivateApi")
     private fun inject(event: InputEvent) {
         val id = display?.display?.displayId ?: throw Fault("displayMissing")
-        InputEvent::class.java.getDeclaredMethod("setDisplayId", Int::class.javaPrimitiveType)
-            .apply { isAccessible = true }.invoke(event, id)
-        val type = Class.forName("android.hardware.input.InputManager")
-        val manager = type.getDeclaredMethod("getInstance").apply { isAccessible = true }.invoke(null)
-        val method = type.getMethod("injectInputEvent", InputEvent::class.java, Int::class.javaPrimitiveType)
         // WAIT_FOR_FINISH can time out after the event was delivered. A false result is
         // not proof of rejection: never replay the same event with another mode.
-        val accepted = method.invoke(manager, event, 2) == true
+        val accepted = try {
+            InputEvent::class.java.getDeclaredMethod("setDisplayId", Int::class.javaPrimitiveType)
+                .apply { isAccessible = true }.invoke(event, id)
+            // Android 17 removed InputManager.getInstance(); the Context service works on every version.
+            val manager = privileged.getSystemService(InputManager::class.java)
+            InputManager::class.java.getMethod("injectInputEvent", InputEvent::class.java, Int::class.javaPrimitiveType)
+                .invoke(manager, event, 2) == true
+        } catch (e: InvocationTargetException) {
+            throw e.targetException // the system's own answer, e.g. SecurityException
+        } catch (_: ReflectiveOperationException) {
+            throw Fault("inputApiUnavailable") // the hidden API is missing or blocked here
+        }
         if (!accepted) throw Fault("inputRejected")
     }
 

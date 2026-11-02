@@ -88,6 +88,43 @@ class PhoneRootStatus {
   final String? reasonCode;
 }
 
+enum PhoneKeepPhase {
+  disabled,
+  idle,
+  restoring,
+  connected,
+  waiting,
+  failed;
+
+  static PhoneKeepPhase parse(Object? wire) => values.asNameMap()[wire] ?? waiting;
+}
+
+/// Persisted keep intent and its transport state; connected does not imply display/input readiness.
+class PhonePrivilegedKeepStatus {
+  const PhonePrivilegedKeepStatus({
+    this.enabled = false,
+    this.mode = PhonePrivilegedMode.off,
+    this.phase = PhoneKeepPhase.disabled,
+    this.reasonCode,
+  });
+
+  factory PhonePrivilegedKeepStatus.parse(Object? value) {
+    final m = _map(value);
+    if (m.isEmpty) return const PhonePrivilegedKeepStatus();
+    return PhonePrivilegedKeepStatus(
+      enabled: _flag(m['enabled']),
+      mode: PhonePrivilegedMode.tryParse(m['mode']) ?? PhonePrivilegedMode.off,
+      phase: PhoneKeepPhase.parse(m['phase']),
+      reasonCode: _text(m['reasonCode']),
+    );
+  }
+
+  final bool enabled;
+  final PhonePrivilegedMode mode;
+  final PhoneKeepPhase phase;
+  final String? reasonCode;
+}
+
 class PhonePrivilegedStatus {
   const PhonePrivilegedStatus({
     this.mode = PhonePrivilegedMode.off,
@@ -97,6 +134,7 @@ class PhonePrivilegedStatus {
     this.recommendedMode = PhonePrivilegedMode.off,
     this.grantPath = 'setup',
     this.rootSelected = false,
+    this.keep = const PhonePrivilegedKeepStatus(),
   });
 
   static PhonePrivilegedStatus? parse(Object? value) {
@@ -114,6 +152,7 @@ class PhonePrivilegedStatus {
       recommendedMode: supported.contains(recommended) ? recommended! : PhonePrivilegedMode.off,
       grantPath: grantPaths.contains(m['grantPath']) ? m['grantPath'] as String : 'setup',
       rootSelected: _flag(m['rootSelected']),
+      keep: PhonePrivilegedKeepStatus.parse(m['keep']),
     );
   }
 
@@ -124,6 +163,7 @@ class PhonePrivilegedStatus {
   final PhonePrivilegedMode recommendedMode;
   final String grantPath;
   final bool rootSelected;
+  final PhonePrivilegedKeepStatus keep;
 }
 
 class PhoneA11yStatus {
@@ -228,6 +268,8 @@ class PhoneBackgroundStatus {
 
   bool get effectiveReady => privileged?.ready ?? ready;
   String? get effectiveReason => privileged == null ? reason : privileged!.reason;
+
+  PhonePrivilegedKeepStatus get keep => privileged?.keep ?? const PhonePrivilegedKeepStatus();
 
   List<PhonePrivilegedMode> get supportedModes =>
       privileged?.supportedModes ??
@@ -917,6 +959,10 @@ class PhoneChannel {
 
   /// The caller gates these actions on the advertised versioned capabilities.
   Future<PhoneResult> setPrivilegedMode(PhonePrivilegedMode mode) => _result('setBackgroundMode', {'mode': mode.name});
+
+  /// An explicit keep choice. Success means saved; status reports actual recovery.
+  Future<PhoneResult> setBackgroundKeep(PhonePrivilegedMode mode, bool enabled) =>
+      _result('setBackgroundKeep', {'mode': mode.name, 'enabled': enabled});
 
   Future<PhoneResult> prepareRoot() => _result('prepareRoot');
 

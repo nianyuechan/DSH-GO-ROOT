@@ -824,7 +824,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
         picked = switch (source) {
           AttachSource.gallery => PickedAttachments(await picker.pickImages(limit: room)),
           AttachSource.camera => PickedAttachments([?await picker.takePhoto()]),
-          AttachSource.files => await picker.pickFiles(limit: room),
+          AttachSource.files => await picker.pickFiles(
+            limit: room,
+            heldBytes: totalAttachmentBytes(_drafts),
+          ),
         };
       } on PlatformException catch (e) {
         if (!ownsDraft()) return;
@@ -864,13 +867,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
 
   void _addDrafts(List<DraftAttachment> picked, {String? problem}) {
     final room = maxAttachments - _drafts.length;
+    var heldBytes = totalAttachmentBytes(_drafts);
     final ok = <DraftAttachment>[];
     for (final a in picked) {
-      final p = attachmentProblem(a);
+      final p = attachmentProblem(a) ?? attachmentBudgetProblem(heldBytes, a);
       if (p != null) {
         problem ??= p;
       } else if (ok.length < room) {
         ok.add(a);
+        heldBytes += a.size;
       } else {
         problem ??= appL10n.chatAttachmentLimit(maxAttachments);
       }
