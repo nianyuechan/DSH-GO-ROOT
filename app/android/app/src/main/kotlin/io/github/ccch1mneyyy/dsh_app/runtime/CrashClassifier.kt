@@ -6,7 +6,7 @@ package io.github.ccch1mneyyy.dsh_app.runtime
  * An unmarked exit (low-memory kill, battery saver, child-process limits) never does.
  */
 enum class FailureKind(val wire: String) {
-    /** The shell/loader or direct preload could not start DSH before ready. */
+    /** PRoot, the shell/loader or direct preload could not start DSH before ready. */
     LAUNCH_FAILED("launchFailed"),
 
     /** Exited with a fatal marker before the runtime reported ready. */
@@ -90,6 +90,10 @@ object CrashClassifier {
         "^(?:/bin/)?(?:sh|bash|dash): (?:[0-9]+: )?exec: /usr/local/bin/dsh: " +
             "(?:Bad address|Exec format error|Permission denied|not found|Function not implemented|Operation not permitted)$",
     )
+    // The first guest command failed before env or DSH could run; this is not an Android kill.
+    private val PROOT_EXEC_FAILED = Regex(
+        "^proot error: execve\\(\"/usr/bin/env\"\\): (?:Permission denied|Too many symbolic links encountered)$",
+    )
     private val DIRECT_FAILED = listOf(
         Regex("^\\[dsh-app-direct] launch failed: .+"),
         Regex("^/.*/opt/node/bin/node: (?:error while loading shared libraries: .+|.+: version [`'].+['`] not found.*)$"),
@@ -147,8 +151,9 @@ object CrashClassifier {
         val fatal = tail.firstOrNull(::isFatal) ?: tail.firstOrNull { HEAP_OOM.matches(it) }?.takeIf { early }
         val launch = if (readyAt == null && exitCode != 0) tail.firstOrNull {
             EXEC_FAILED.matches(it) ||
+                (rootEngine && ROOT_FAILED.any { pattern -> pattern.matches(it) }) ||
                 (directEngine && DIRECT_FAILED.any { pattern -> pattern.matches(it) }) ||
-                (rootEngine && ROOT_FAILED.any { pattern -> pattern.matches(it) })
+                (!directEngine && !rootEngine && PROOT_EXEC_FAILED.matches(it))
         } ?: (if (directEngine && exitCode == SIGSYS_EXIT) SECCOMP_KILLED else null) else null
         val kind = when {
             tail.any { NO_SPACE.containsMatchIn(it) } -> FailureKind.NO_SPACE

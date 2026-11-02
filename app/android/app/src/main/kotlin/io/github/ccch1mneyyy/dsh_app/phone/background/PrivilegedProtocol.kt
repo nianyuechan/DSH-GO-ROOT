@@ -58,6 +58,8 @@ object Proto {
     const val INJECT_OK = "injectOk"
     /** Gate only, with INJECT_OK false: the failing injection's [ERROR] code. Older cores omit it. */
     const val INJECT_ERROR = "injectError"
+    /** With [ERROR] deviceUnavailable: the failing step's exception type, never its message. Older cores omit it. */
+    const val ERROR_DETAIL = "errorDetail"
 
     // response keys
     const val OK = "ok"
@@ -96,6 +98,10 @@ object Proto {
 
 /** Stable reason codes → one short Chinese sentence for the model (after Phase's set). */
 object Reasons {
+    fun of(code: String?, detail: String?): String = withDetail(of(code), detail)
+
+    fun withDetail(reason: String, detail: String?): String = reason + detail?.let { "（$it）" }.orEmpty()
+
     fun of(code: String?): String = when (code) {
         null -> ""
         // l10n:keep privileged protocol

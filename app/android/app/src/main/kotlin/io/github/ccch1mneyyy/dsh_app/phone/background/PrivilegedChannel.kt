@@ -34,18 +34,18 @@ class AdbChannel(private val stream: AdbStream) : PrivilegedChannel {
     )
 
     override fun execute(request: Bundle): Bundle = try {
-        session.exchange(Bundles.marshal(request))?.let(Bundles::unmarshal) ?: unavailable()
-    } catch (_: Exception) {
+        session.exchange(Bundles.marshal(request))?.let(Bundles::unmarshal) ?: unavailable("adb closed")
+    } catch (e: Exception) {
         // Also retire a frame whose Bundle cannot be decoded; never reuse a partially read reply.
         session.close()
-        unavailable()
+        unavailable("adb ${e.javaClass.simpleName}")
     }
 
     override fun alive(): Boolean = session.alive()
 
     override fun close() = session.close()
 
-    private fun unavailable() = Bundle().apply {
-        putBoolean(Proto.OK, false); putString(Proto.ERROR, "deviceUnavailable")
+    private fun unavailable(detail: String) = Bundle().apply {
+        putBoolean(Proto.OK, false); putString(Proto.ERROR, "deviceUnavailable"); putString(Proto.ERROR_DETAIL, detail)
     }
 }

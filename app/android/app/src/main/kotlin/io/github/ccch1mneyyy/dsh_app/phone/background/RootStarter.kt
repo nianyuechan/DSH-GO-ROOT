@@ -160,6 +160,7 @@ private class RootChannel(
         Bundle().apply {
             putBoolean(Proto.OK, false)
             putString(Proto.ERROR, if (timeout) "timeout" else "deviceUnavailable")
+            if (!timeout) putString(Proto.ERROR_DETAIL, "root ${error.javaClass.simpleName}")
         }
     }
 }

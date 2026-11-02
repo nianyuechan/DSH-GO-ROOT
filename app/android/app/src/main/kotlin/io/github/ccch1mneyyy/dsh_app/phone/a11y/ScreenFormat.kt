@@ -27,7 +27,7 @@ class ScreenInput(
     val packageName: String?,
     val screenWidth: Int,
     val screenHeight: Int,
-    val keyboardShown: Boolean,
+    val keyboardShown: Boolean?,
     /** Top-most first; the last one is the main window, the others render as 弹窗. */
     val windows: List<UiWindow>,
     val detail: Boolean = false,
@@ -75,6 +75,8 @@ class ScreenElement(
     val fingerprint: String,
     /** What `+` compares with the previous snapshot. */
     val key: String,
+    /** Masked content and state, not just the stable action-target identity. */
+    internal val observationKey: String = fingerprint,
 )
 
 class FormattedScreen(
@@ -174,7 +176,12 @@ object ScreenFormat {
         // l10n:keep model screen format
         val orientation = if (input.screenWidth > input.screenHeight) "横屏" else "竖屏"
         // l10n:keep model screen format
-        val keyboard = if (input.keyboardShown) "键盘弹出" else "键盘收起"
+        val keyboard = when (input.keyboardShown) {
+            true -> "键盘弹出"
+            false -> "键盘收起"
+            // l10n:keep model screen format
+            null -> "键盘状态未知"
+        }
         // l10n:keep model screen format
         val app = clean(input.appLabel) ?: input.packageName ?: "未知应用"
         // l10n:keep model screen format
@@ -207,6 +214,16 @@ object ScreenFormat {
                 )
                 walk(item.subs)
             }
+        }
+        for (window in windows) window.root?.let { walk(flatten(it, window, null)) }
+        return out
+    }
+
+    /** Masked content/state for observation comparison, including elements outside the text budget. */
+    internal fun observationKeys(windows: List<UiWindow>): List<String> {
+        val out = mutableListOf<String>()
+        fun walk(items: List<Item>) {
+            for (item in items) { out += item.observationKey(); walk(item.subs) }
         }
         for (window in windows) window.root?.let { walk(flatten(it, window, null)) }
         return out
@@ -262,6 +279,8 @@ object ScreenFormat {
             return "w${window.id}|${node.bounds}|$role|$identity" + (checkedState?.let { "|c=$it" } ?: "")
         }
 
+        fun observationKey() = "${fingerprint()}|${content.orEmpty().length}:${content.orEmpty()}|${states.joinToString("|")}"
+
         fun key() = "$role|${clip(label, LABEL_CAP)}"
 
         fun fullText(): String {
@@ -283,6 +302,7 @@ object ScreenFormat {
             password = node.password, secret = secret, checkable = node.checkable, scroll = node.scroll,
             horizontal = horizontal, viewId = node.viewId, sensitiveWord = sensitive, listId = listId, parentId = parentId,
             fingerprint = fingerprint(), key = key,
+            observationKey = observationKey(),
         )
     }
 

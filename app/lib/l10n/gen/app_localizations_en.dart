@@ -4752,6 +4752,48 @@ class L10nEn extends L10n {
   }
 
   @override
+  String get engineNewChatDefaultsLast => 'New chat defaults (last choice)';
+
+  @override
+  String get engineNewChatDefaultsFixed => 'New chat defaults (fixed)';
+
+  @override
+  String get engineNewChatUseLast => 'Last choice';
+
+  @override
+  String get engineNewChatUseFixed => 'Fixed default';
+
+  @override
+  String get engineNewChatDefaultsHint =>
+      'Saved on the current host; affects only the model and thinking effort of new chats. Permissions keep their separate default and never inherit temporary session grants.';
+
+  @override
+  String get engineNewChatDefaultsLegacy =>
+      'This engine only supports remembering the last choice, not fixed defaults. It cannot confirm whether defaults were saved when switching models.';
+
+  @override
+  String get engineNewChatDefaultsUnsupported => 'This host has no editable default model settings';
+
+  @override
+  String get engineNewChatDefaultsSelectionUnavailable =>
+      'This model or thinking effort is no longer available. Choose again.';
+
+  @override
+  String get engineNewChatDefaultsInheritedEffort =>
+      'Host base settings specify a thinking effort that cannot be cleared here for a non-thinking model. Update the host configuration first.';
+
+  @override
+  String get engineNewChatDefaultsSaving => 'Saving and confirming defaults…';
+
+  @override
+  String get engineNewChatDefaultsUnconfirmed =>
+      'Could not confirm the complete defaults. Refresh and check the model and thinking effort; host base settings or another client may have changed them.';
+
+  @override
+  String get engineModelDefaultSaveFailed =>
+      'The model changed for this chat, but new chat defaults were not saved. Check Settings › Models and retry.';
+
+  @override
   String get engineAccountSignedIn => 'Signed in to DeepSeek';
 
   @override

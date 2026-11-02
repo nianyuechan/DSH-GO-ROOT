@@ -23,10 +23,12 @@ class ScreenVerdictTest {
 
     @Test fun nothingToCompareIsNotTheSameAsNoChange() {
         for (scrolled in listOf(false, true)) {
-            val note = ScreenVerdict.note(comparable = false, changed = false, keyboard = null, scrolled = scrolled)
-            assertEquals(ScreenVerdict.UNVERIFIABLE, note)
-            assertFalse(note, note.contains("没有明显变化"))
-            assertFalse(note, note.contains("到头"))
+            for (changed in listOf(false, true)) {
+                val note = ScreenVerdict.note(comparable = false, changed = changed, keyboard = null, scrolled = scrolled)
+                assertEquals(ScreenVerdict.UNVERIFIABLE, note)
+                assertFalse(note, note.contains("没有明显变化"))
+                assertFalse(note, note.contains("到头"))
+            }
         }
     }
 

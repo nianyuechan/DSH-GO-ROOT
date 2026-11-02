@@ -10,6 +10,7 @@ import 'attachments.dart';
 import 'chat_error_text.dart';
 import 'connection_state.dart';
 import 'hosts_state.dart';
+import 'models_state.dart';
 import 'notify_state.dart' show appForegroundProvider;
 import 'run_pulse.dart';
 import 'sessions_state.dart';
@@ -246,6 +247,7 @@ class ChatState {
     this.loading = true,
     this.loadingOlder = false,
     this.error,
+    this.defaultModelSaveFailed = false,
     this.notice,
     this.connection,
     this.model,
@@ -281,6 +283,11 @@ class ChatState {
   final bool loading;
   final bool loadingOlder;
   final String? error;
+
+  /// The session model changed, but remembering it for new chats failed.
+  /// Independent of transient send/sync errors; only explicit dismissal or a
+  /// later saved/skipped acknowledgement clears it.
+  final bool defaultModelSaveFailed;
 
   /// Something worth knowing that isn't a failure (e.g. images went as files
   /// because the model reads text only). Shown like [error], in info colours.
@@ -346,6 +353,7 @@ class ChatState {
     bool? loadingOlder,
     String? error,
     bool clearError = false,
+    bool? defaultModelSaveFailed,
     String? notice,
     bool clearNotice = false,
     ModelSelection? model,
@@ -367,6 +375,7 @@ class ChatState {
     loading: loading ?? this.loading,
     loadingOlder: loadingOlder ?? this.loadingOlder,
     error: clearError ? null : (error ?? this.error),
+    defaultModelSaveFailed: defaultModelSaveFailed ?? this.defaultModelSaveFailed,
     notice: clearNotice ? null : (notice ?? this.notice),
     connection: connection,
     model: model ?? this.model,
@@ -423,6 +432,7 @@ class ChatController extends Notifier<ChatState> {
   bool _dirty = false;
   ModelSelection? _model;
   Object? _modelChange;
+  bool _defaultModelSaveFailed = false;
   Object? _historyRead;
   List<PendingPrompt> _pending = const [];
 
@@ -517,6 +527,7 @@ class ChatController extends Notifier<ChatState> {
         _transcript.apply(HostRequestCancelledEvent(id));
       }
       _approvalHost = host;
+      _defaultModelSaveFailed = false;
       _approvalScope = Object();
       _autoApprove = false;
       _autoAnswered = const {};
@@ -639,6 +650,7 @@ class ChatController extends Notifier<ChatState> {
     syncing: true,
     commands: _commandList(),
     model: _model,
+    defaultModelSaveFailed: _defaultModelSaveFailed,
     pending: _placePending(),
     autoApprove: _autoApprove,
     autoAnswered: _autoAnswered,
@@ -1122,6 +1134,7 @@ class ChatController extends Notifier<ChatState> {
       loading: false,
       loadingOlder: state.loadingOlder,
       error: freshSnapshot ? null : state.error,
+      defaultModelSaveFailed: _defaultModelSaveFailed,
       notice: freshSnapshot ? null : state.notice,
       connection: _transcript.connectionState,
       model: _model,
@@ -1710,15 +1723,26 @@ class ChatController extends Notifier<ChatState> {
     state = state.copyWith(model: selection);
     try {
       if (!current()) return false;
-      final applied = await client.setModel(
+      final result = await client.setModelResult(
         sessionId,
         provider: selection.provider,
         model: selection.model,
         reasoningEffort: selection.reasoningEffort,
       );
       if (!current()) return false;
-      _model = applied;
-      state = state.copyWith(model: applied);
+      _model = result.selected;
+      switch (result.defaultSave?.status) {
+        case ModelDefaultSaveStatus.failed:
+          _defaultModelSaveFailed = true;
+        case ModelDefaultSaveStatus.saved || ModelDefaultSaveStatus.skipped:
+          _defaultModelSaveFailed = false;
+        case ModelDefaultSaveStatus.unknown || null:
+          break;
+      }
+      state = state.copyWith(model: result.selected, defaultModelSaveFailed: _defaultModelSaveFailed);
+      // Old hosts do not acknowledge persistence; a fresh catalog is still
+      // useful, but is never presented as proof that the default was saved.
+      ref.invalidate(modelCatalogProvider);
       return current();
     } catch (e) {
       if (!current()) return false;
@@ -1737,6 +1761,7 @@ class ChatController extends Notifier<ChatState> {
         loading: state.loading,
         loadingOlder: state.loadingOlder,
         error: chatErrorText(e, action: appL10n.stateChatModelSwitchFailed),
+        defaultModelSaveFailed: _defaultModelSaveFailed,
         connection: state.connection,
         model: previous,
         pending: state.pending,
@@ -1796,6 +1821,11 @@ class ChatController extends Notifier<ChatState> {
   }
 
   void dismissError() => state = state.copyWith(clearError: true);
+
+  void dismissDefaultModelSaveWarning() {
+    _defaultModelSaveFailed = false;
+    state = state.copyWith(defaultModelSaveFailed: false);
+  }
 
   // ---------------------------------------------------------------------------
   // Message actions. DSH 0.2.1 cannot edit, regenerate or rewind a session in

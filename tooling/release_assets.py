@@ -31,12 +31,14 @@ import re
 import shutil
 import subprocess
 import sys
+import zipfile
 
 import apk_delta
 from build_number import MAX_VERSION_CODE, decode
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 FLAVORS = ("arm64", "x64")
+FLAVOR_ABI = {"arm64": "arm64-v8a", "x64": "x86_64"}
 REPO = "ccch1mneyyy/dsh-go"
 VERSION_RE = re.compile(r"^(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?:\+(\d+))?$")
 BADGING_RE = re.compile(r"^package: .*?\bversionCode='(\d*)' versionName='([^']*)'", re.MULTILINE)
@@ -47,6 +49,13 @@ PATCH_LIMIT = 0.6
 
 class ReleaseError(Exception):
     pass
+
+
+def check_abis(flavor: str, entries: list[str]) -> None:
+    """A flavor's APK holds native libraries for its own ABI and no other."""
+    abis = {name.split("/")[1] for name in entries if name.startswith("lib/") and name.endswith(".so")}
+    if abis != {FLAVOR_ABI[flavor]}:
+        raise ReleaseError(f"{flavor} APK has native libraries for {sorted(abis)}, expected only {FLAVOR_ABI[flavor]}")
 
 
 def pubspec_version() -> str:
@@ -214,6 +223,9 @@ def main() -> None:
         sys.exit("aapt2 not found (Android SDK build-tools): it reads versionName and versionCode from the APKs")
     try:
         build = release_build(name, expected, {flavor: apk_version(aapt2, path) for flavor, path in sources.items()})
+        for flavor, path in sources.items():
+            with zipfile.ZipFile(path) as apk:
+                check_abis(flavor, apk.namelist())
     except ReleaseError as e:
         sys.exit(str(e))
 

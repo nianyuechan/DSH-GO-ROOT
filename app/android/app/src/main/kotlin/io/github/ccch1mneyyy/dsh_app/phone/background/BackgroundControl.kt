@@ -63,6 +63,7 @@ class BackgroundControl private constructor(context: Context) {
     @Volatile private var trustedDisplayOk: Boolean? = null
     @Volatile private var injectOk: Boolean? = null
     @Volatile private var injectError: String? = null
+    @Volatile private var gateDetail: String? = null
 
     private fun notifyChanged() = runCatching { onStatusChanged() }
 
@@ -120,12 +121,12 @@ class BackgroundControl private constructor(context: Context) {
     }
 
     private fun gateReason(): String? = when {
-        trustedDisplayOk == false -> UNSUPPORTED
-        injectOk == false -> AppStrings.get(app, when (injectError) {
+        trustedDisplayOk == false -> Reasons.withDetail(UNSUPPORTED, gateDetail)
+        injectOk == false -> Reasons.withDetail(AppStrings.get(app, when (injectError) {
             "inputApiUnavailable" -> R.string.background_input_api_unavailable
             "systemOperationDenied" -> R.string.background_input_permission_denied
             else -> R.string.background_injection_denied
-        })
+        }), gateDetail)
         else -> null
     }
 
@@ -164,6 +165,7 @@ class BackgroundControl private constructor(context: Context) {
             trustedDisplayOk = null
             injectOk = null
             injectError = null
+            gateDetail = null
         }
         synchronized(keepGuard) { keep.select(selected); rootSelected = selected == "root" }
         val cleared = synchronized(preferenceGuard) {
@@ -381,6 +383,7 @@ class BackgroundControl private constructor(context: Context) {
         trustedDisplayOk = ok
         injectOk = if (response.containsKey(Proto.INJECT_OK)) response.getBoolean(Proto.INJECT_OK) else null
         injectError = if (injectOk == false) response.getString(Proto.INJECT_ERROR) else null
+        gateDetail = response.getString(Proto.ERROR_DETAIL)
         notifyChanged()
         return gateReason()
     }

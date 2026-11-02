@@ -14,15 +14,20 @@ internal object ScreenDigest {
     private const val NOTE = "提示："
     // l10n:keep agent screen format
     private val ZONES = setOf("顶部", "中部", "底部")
-    private val ELEMENT_LINE = Regex("""^\s*\[(\d+)\]""")
+    // l10n:keep agent screen format matcher
+    private val ELEMENT_LINE = Regex("""^\s*(?:列表\s+|[+⚠]*)\[(\d+)\]""")
+    private val ELEMENT_ID = Regex("""(?:^|\s)[+⚠]*\[(\d+)\]""")
 
-    fun text(previousId: String?, previous: FormattedScreen?, currentId: String, current: FormattedScreen): String {
+    fun text(previousId: String?, previous: FormattedScreen?, currentId: String, current: FormattedScreen, canReuse: Boolean = true, observationChanged: Boolean = false): String {
         val full = current.text
-        if (previous == null || previousId == null) return full
-        val before = previous.elements.map { it.fingerprint }
-        val now = current.elements.map { it.fingerprint }
+        if (previous == null || previousId == null || !canReuse || previous.elements.isEmpty() || current.elements.isEmpty()) return full
+        if (previous.elements.map { it.packageName to it.windowId } != current.elements.map { it.packageName to it.windowId }) return full
+        val before = previous.elements.map { it.observationKey }
+        val now = current.elements.map { it.observationKey }
         if (before.size != now.size) return full
         val changed = now.indices.filter { before[it] != now[it] }
+        // The text budget may have hidden the only changed element.
+        if (changed.isEmpty() && observationChanged) return full
         // l10n:keep agent screen format
         if (changed.isEmpty()) return "${headAndNotes(current)}\n（与 $previousId 相同，编号不变）"
         if (changed.size * 3 > now.size) return full
@@ -32,7 +37,7 @@ internal object ScreenDigest {
             val id = ELEMENT_LINE.find(line)?.groupValues?.get(1)?.toIntOrNull()
             when {
                 index == 0 || line.startsWith(NOTE) -> out.append(line).append('\n')
-                id != null -> if (id in keep) out.append(line).append('\n')
+                id != null -> if (ELEMENT_ID.findAll(line).any { it.groupValues[1].toIntOrNull() in keep }) out.append(line).append('\n')
                 // l10n:keep agent screen format
                 line.trim() in ZONES -> out.append(line).append('\n')
             }

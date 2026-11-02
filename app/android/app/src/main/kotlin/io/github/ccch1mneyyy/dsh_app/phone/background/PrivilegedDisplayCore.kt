@@ -107,6 +107,7 @@ class PrivilegedDisplayCore(private val context: Context) {
         } catch (e: Throwable) {
             response.putBoolean(Proto.OK, false)
             response.putString(Proto.ERROR, failureCode(e))
+            failureDetail(e)?.let { response.putString(Proto.ERROR_DETAIL, it) }
         }
         return response
     }
@@ -116,6 +117,9 @@ class PrivilegedDisplayCore(private val context: Context) {
         is SecurityException -> "systemOperationDenied"
         else -> "deviceUnavailable"
     }
+
+    private fun failureDetail(e: Throwable): String? =
+        if (e is Fault || e is SecurityException) null else e.javaClass.simpleName
 
     private fun dispatch(op: String?, request: Bundle, response: Bundle) {
         val ownerId = request.getString(Proto.OWNER).orEmpty()
@@ -180,9 +184,20 @@ class PrivilegedDisplayCore(private val context: Context) {
         try {
             owner = "__gate__"
             createDisplay(Bundle().apply { putInt(Proto.SHORT_SIDE, 360); putInt(Proto.ASPECT_W, 9); putInt(Proto.ASPECT_H, 20) })
-            val injection = runCatching { injectTap(1, 1, false) }
+            // The input side learns of a new display only after createVirtualDisplay returns, and
+            // a tap that arrives first reports false (#362). A task's input is never replayed, but
+            // nothing is on this display and it is released below, so here repeating touches nothing.
+            val injection = runCatching {
+                BackgroundPolicy.retryUntil(
+                    GATE_INPUT_WAIT_MS, GATE_INPUT_PAUSE_MS, SystemClock::uptimeMillis, ::sleepChecked,
+                    retry = { it is Fault && it.code == "inputRejected" },
+                ) { injectTap(1, 1, false) }
+            }
             response.putBoolean(Proto.INJECT_OK, injection.isSuccess)
-            injection.exceptionOrNull()?.let { response.putString(Proto.INJECT_ERROR, failureCode(it)) }
+            injection.exceptionOrNull()?.let {
+                response.putString(Proto.INJECT_ERROR, failureCode(it))
+                failureDetail(it)?.let { detail -> response.putString(Proto.ERROR_DETAIL, detail) }
+            }
             response.putInt(Proto.DISPLAY_ID, displayId())
         } finally {
             releaseAll()
@@ -810,6 +825,8 @@ class PrivilegedDisplayCore(private val context: Context) {
 
     companion object {
         private val PACKAGE = Regex("[a-zA-Z][a-zA-Z0-9_]*(\\.[a-zA-Z0-9_]+)+")
+        private const val GATE_INPUT_WAIT_MS = 1500L
+        private const val GATE_INPUT_PAUSE_MS = 50L
         private val FLAG_NAMES = listOf(
             "PUBLIC", "OWN_CONTENT_ONLY", "SUPPORTS_TOUCH", "DESTROY_CONTENT_ON_REMOVAL",
             "TRUSTED", "OWN_FOCUS", "STEAL_TOP_FOCUS_DISABLED")

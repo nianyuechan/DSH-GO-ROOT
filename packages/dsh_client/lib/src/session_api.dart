@@ -683,10 +683,19 @@ class DshClient {
     return ModelCatalog.fromJson(await rpc.call('session/modelCatalog'));
   }
 
-  /// `session/selectModel`; the pair must be in the catalog
-  /// (`session/model-unavailable` otherwise). Also saved as the default for
-  /// new sessions in the background.
+  /// Switch this session's model, retaining the selection-only API.
   Future<ModelSelection> setModel(
+    String sessionId, {
+    required String provider,
+    required String model,
+    String? reasoningEffort,
+  }) async =>
+      (await setModelResult(sessionId, provider: provider, model: model, reasoningEffort: reasoningEffort)).selected;
+
+  /// `session/selectModel`; unavailable routes fail the request. A failure to
+  /// save the next-session default does not undo an accepted session selection.
+  /// Older hosts omit [ModelSelectionResult.defaultSave].
+  Future<ModelSelectionResult> setModelResult(
     String sessionId, {
     required String provider,
     required String model,
@@ -697,8 +706,12 @@ class DshClient {
         'request': {'sessionId': sessionId, 'provider': provider, 'model': model, 'reasoningEffort': ?reasoningEffort},
       }),
     );
-    return ModelSelection.fromJson(value['selected']) ??
-        ModelSelection(provider: provider, model: model, reasoningEffort: reasoningEffort);
+    return ModelSelectionResult(
+      selected:
+          ModelSelection.fromJson(value['selected']) ??
+          ModelSelection(provider: provider, model: model, reasoningEffort: reasoningEffort),
+      defaultSave: ModelDefaultSave.fromJson(value['defaultSave']),
+    );
   }
 
   /// `llm/listProviders`: registered provider routes.

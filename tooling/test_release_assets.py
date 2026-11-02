@@ -20,7 +20,7 @@ from unittest import mock
 
 import apk_delta
 from build_number import MAX_VERSION_CODE
-from release_assets import BADGING_RE, ReleaseError, patch_from, previous_releases, published_apk, release_build
+from release_assets import BADGING_RE, ReleaseError, check_abis, patch_from, previous_releases, published_apk, release_build
 
 # Stands in for gh: `release list` prints $FAKE_RELEASES, `release download`
 # copies the asset files from $FAKE_ASSETS/<tag>/; every call goes to $FAKE_LOG.
@@ -83,6 +83,20 @@ class ReleaseBuildTest(unittest.TestCase):
     def test_explicit_version_must_match(self):
         with self.assertRaisesRegex(ReleaseError, r"\+7"):
             release_build("1.2.0", 7, {"arm64": ("1.2.0", 10251234)})
+
+    def test_apk_holds_only_its_own_abi(self):
+        check_abis("arm64", ["classes.dex", "lib/arm64-v8a/libapp.so", "lib/arm64-v8a/libflutter.so"])
+        check_abis("x64", ["lib/x86_64/libapp.so"])
+
+    def test_apk_with_another_abi_is_refused(self):
+        with self.assertRaisesRegex(ReleaseError, "armeabi-v7a"):
+            check_abis("arm64", ["lib/arm64-v8a/libapp.so", "lib/armeabi-v7a/libspake2.so"])
+
+    def test_apk_without_native_libraries_is_refused(self):
+        with self.assertRaisesRegex(ReleaseError, "expected only arm64-v8a"):
+            check_abis("arm64", ["classes.dex"])
+        with self.assertRaisesRegex(ReleaseError, "expected only arm64-v8a"):
+            check_abis("arm64", ["lib/arm64-v8a/"])
 
     def test_badging_line(self):
         line = ("package: name='io.github.ccch1mneyyy.dsh_app' versionCode='10251234' versionName='1.2.0-beta.1' "

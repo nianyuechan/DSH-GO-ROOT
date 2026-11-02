@@ -69,19 +69,15 @@ internal class MainScreenDriver(private val service: PhoneA11yService, private v
         val appLabel: String?,
         val protectedPage: Boolean,
         val ownApp: Boolean,
-        val mainWindowId: Int?,
         /** The front window hides its content from us (data-sensitive page): reported as secure. */
         val hidden: Boolean,
         /** The window is there but nothing under it was readable (filtered subtree, page still drawing). */
         val unreadable: Boolean,
-        val keyboardShown: Boolean,
-        /** The main window's bounds: the IME showing / hiding moves them. */
-        val mainWindowBounds: Box?,
+        val observation: ScreenObservation,
         /** Notes already shown on this app's previous screen (not repeated). */
         val noteKeys: Set<String>,
     ) {
         @Volatile var image: ImageGeometry? = null
-        val fingerprints: Set<String> by lazy { screen.elements.map { it.fingerprint }.toSet() }
     }
 
     fun close() {
@@ -248,7 +244,7 @@ internal class MainScreenDriver(private val service: PhoneA11yService, private v
             val deadline = SystemClock.uptimeMillis() + COLLECT_MS
             val items = CollectedItems()
             // l10n:keep agent screen result
-            var stop = "到底了"
+            var stop = "未能读取列表"
             var read = 0
             var misses = 0
             val direction = if (el.horizontal) PhoneAction.Direction.RIGHT else PhoneAction.Direction.DOWN
@@ -257,7 +253,7 @@ internal class MainScreenDriver(private val service: PhoneA11yService, private v
                 val cap = capture()
                 try {
                     // Nothing readable in front: this says "cannot read" instead of blaming the list.
-                    if (cap.unreadableWindowTitle != null) {
+                    if (unavailable(cap)) {
                         // l10n:keep agent screen result
                         stop = "这一屏读不到内容（可能受敏感视图策略限制）"
                         break
@@ -265,22 +261,21 @@ internal class MainScreenDriver(private val service: PhoneA11yService, private v
                     val list = ScreenFormat.followList(ScreenFormat.index(cap.windows), el.fingerprint, lastBounds)
                         // l10n:keep agent screen result
                         ?: run { stop = "列表不见了（界面变了）"; null } ?: break
-                    lastBounds = list.bounds
-                    read++
-                    var added = 0
-                    var found = false
-                    for (t in list.itemTexts) {
-                        if (items.add(t)) {
-                            added++
-                            if (wanted != null && t.contains(wanted, ignoreCase = true)) found = true
-                        }
+                    val page = items.readPage(list.itemTexts, wanted, cap.truncated || cap.partial)
+                    if (list.itemTexts.isNotEmpty()) read++
+                    if (page.stopReason != null) { stop = page.stopReason; break }
+                    if (list.itemTexts.isEmpty()) {
+                        // l10n:keep agent screen result
+                        stop = "列表没有可读条目，无法确认是否到底"
+                        break
                     }
+                    lastBounds = list.bounds
                     // l10n:keep agent screen result
-                    if (found) { stop = "找到了「$wanted」"; break }
+                    if (page.found) { stop = "找到了「$wanted」"; break }
                     // l10n:keep agent screen result
                     if (items.chars > COLLECT_CHARS) { stop = "内容太多，先停在这里"; break }
                     // l10n:keep agent screen result
-                    if (read > 1 && added == 0) { if (++misses >= 2) { stop = "到底了"; break } } else misses = 0
+                    if (read > 1 && page.added == 0) { if (++misses >= 2) { stop = "没有读到更多条目，可能已经到底"; break } } else misses = 0
                     // l10n:keep agent screen result
                     if (read >= pages) { stop = "达到页数上限（$pages 页）"; break }
                     // l10n:keep agent screen result
@@ -294,7 +289,7 @@ internal class MainScreenDriver(private val service: PhoneA11yService, private v
                     val before = clock.count
                     val out = actuator.scroll(node, el.scroll, el.horizontal, list.bounds, cap.screen, direction)
                     // l10n:keep agent screen result
-                    if (!out.accepted) { stop = "到底了"; break }
+                    if (!out.accepted) { stop = "系统没有接受滚动，无法确认是否到底"; break }
                     clock.settle(before, 1_200, 350, 3_000) { cancelled(gen) }
                     if (misses > 0) clock.pause(800) { cancelled(gen) } // lists that load more on demand
                 } finally { cap.recycle() }
@@ -360,7 +355,7 @@ internal class MainScreenDriver(private val service: PhoneA11yService, private v
             // l10n:keep agent screen result
             if (!out.accepted) return ActionResult(false, "系统没有接受这次${if (a.long) "长按" else "点击"}「$what」。", observeQuiet())
             // l10n:keep agent screen result
-            return after(before, r.snap, gen, "已${if (a.long) "长按" else "点击"}「$what」。")
+            return after(before, r.snap, gen, "已提交${if (a.long) "长按" else "点击"}「$what」。")
         } finally { r.cap.recycle() }
     }
 
@@ -392,7 +387,7 @@ internal class MainScreenDriver(private val service: PhoneA11yService, private v
             var message = "已在「$name」输入，回读一致。"
             if (a.submit) {
                 // l10n:keep agent screen result
-                if (actuator.imeEnter(r.node)) message += "已按键盘上的发送 / 搜索键。"
+                if (actuator.imeEnter(r.node)) message += "已提交键盘上的发送 / 搜索操作。"
                 // l10n:keep agent screen result
                 else return ActionResult(false, "$message 但这个输入框不支持代按回车，没有提交：请点页面上的「发送」或「搜索」按钮。", settledSnapshot(before, gen))
             }
@@ -418,17 +413,24 @@ internal class MainScreenDriver(private val service: PhoneA11yService, private v
         }
         if (targetId == null) {
             // l10n:keep agent screen result
-            if (snap?.ownApp == true && !lifted.ownApp) return ActionResult(false, "这是 DSH 自己的界面，不操作。")
-            // l10n:keep agent screen result
-            if (snap?.unreadable == true) return ActionResult(false, "这一屏读不到内容（可能受敏感视图策略限制），不盲滑。请 handoff。", observeQuiet())
-            val screen = screenBox()
-            val before = clock.count
-            val out = actuator.scroll(null, 0, a.direction == PhoneAction.Direction.LEFT || a.direction == PhoneAction.Direction.RIGHT,
-                Box(screen.left, screen.top + screen.height / 5, screen.right, screen.bottom - screen.height / 6), screen, a.direction)
-            // l10n:keep agent screen result
-            if (!out.accepted) return ActionResult(false, "没能滚动。", observeQuiet())
-            // l10n:keep agent screen result
-            return after(before, snap, gen, "已${dirWord}滑动屏幕。", scrolled = true)
+            if (snap == null || snap.id != a.screenId) return ActionResult(false, "屏幕编号 ${a.screenId} 已过期，请先看新屏幕再滚动。", observeQuiet())
+            val cap = capture()
+            try {
+                // l10n:keep agent screen result
+                if (cap.ownAppInFront && !lifted.ownApp) return ActionResult(false, "这是 DSH 自己的界面，不操作。")
+                // l10n:keep agent screen result
+                if (unavailable(cap)) return ActionResult(false, "这一屏读不到内容（可能受敏感视图策略限制），不盲滑。请 handoff。", toSnapshot(publish(cap, false)))
+                // l10n:keep agent screen result
+                if (!observation(cap).reusableCoordinates(snap.observation)) return ActionResult(false, "无法确认当前界面仍与上一屏一致，没有滚动。请先看新屏幕。", toSnapshot(publish(cap, false)))
+                val screen = cap.screen
+                val before = clock.count
+                val out = actuator.scroll(null, 0, a.direction == PhoneAction.Direction.LEFT || a.direction == PhoneAction.Direction.RIGHT,
+                    Box(screen.left, screen.top + screen.height / 5, screen.right, screen.bottom - screen.height / 6), screen, a.direction)
+                // l10n:keep agent screen result
+                if (!out.accepted) return ActionResult(false, "没能滚动。", observeQuiet())
+                // l10n:keep agent screen result
+                return after(before, snap, gen, "已提交${dirWord}滑动屏幕。", scrolled = true)
+            } finally { cap.recycle() }
         }
         val res = resolve(a.screenId, targetId)
         val r = res as? Resolved ?: return res as ActionResult
@@ -438,9 +440,9 @@ internal class MainScreenDriver(private val service: PhoneA11yService, private v
             val before = clock.count
             val out = actuator.scroll(r.node, r.el.scroll, r.el.horizontal, r.el.bounds, r.cap.screen, a.direction)
             // l10n:keep agent screen result
-            if (!out.accepted) return ActionResult(false, "没能${dirWord}滚动，可能已经到头了。", observeQuiet())
+            if (!out.accepted) return ActionResult(false, "系统没有接受${dirWord}滚动，无法确认是否到底。", observeQuiet())
             // l10n:keep agent screen result
-            return after(before, r.snap, gen, "已${dirWord}滚动${if (r.el.kind == ElementKind.LIST) "列表 [${r.el.id}]" else ""}。", scrolled = true)
+            return after(before, r.snap, gen, "已提交${dirWord}滚动${if (r.el.kind == ElementKind.LIST) "列表 [${r.el.id}]" else ""}。", scrolled = true)
         } finally { r.cap.recycle() }
     }
 
@@ -450,13 +452,13 @@ internal class MainScreenDriver(private val service: PhoneA11yService, private v
         if (!actuator.global(a.key)) return ActionResult(false, "系统没有执行这个按键。")
         val what = when (a.key) {
             // l10n:keep agent screen result
-            PhoneAction.GlobalKey.BACK -> "已按返回键。"
+            PhoneAction.GlobalKey.BACK -> "已提交返回键操作。"
             // l10n:keep agent screen result
-            PhoneAction.GlobalKey.HOME -> "已回到桌面。"
+            PhoneAction.GlobalKey.HOME -> "已提交回到桌面的按键操作。"
             // l10n:keep agent screen result
-            PhoneAction.GlobalKey.RECENTS -> "已打开最近任务。"
+            PhoneAction.GlobalKey.RECENTS -> "已提交打开最近任务的按键操作。"
             // l10n:keep agent screen result
-            PhoneAction.GlobalKey.NOTIFICATIONS -> "已拉下通知栏。"
+            PhoneAction.GlobalKey.NOTIFICATIONS -> "已提交打开通知栏的按键操作。"
         }
         return after(before, latest, gen, what)
     }
@@ -478,16 +480,19 @@ internal class MainScreenDriver(private val service: PhoneA11yService, private v
         // l10n:keep agent screen result
         if (snap.protectedPage && !lifted.systemPages) return ActionResult(false, "这是系统权限 / 安全相关页面，DSH 不在这里点击。需要的话请用 handoff 交给用户。")
         // l10n:keep agent screen result
-        if (snap.unreadable) return ActionResult(false, "这一屏读不到内容（可能受敏感视图策略限制），不盲点。请 handoff。", observeQuiet())
+        if (snap.hidden || snap.unreadable) return ActionResult(false, "这一屏读不到内容（可能受敏感视图策略限制），不盲点。请 handoff。", observeQuiet())
         val cap = capture()
-        val same = try { cap.packageName == snap.packageName && cap.windows.lastOrNull()?.id == snap.mainWindowId } finally { cap.recycle() }
-        // l10n:keep agent screen result
-        if (!same) return ActionResult(false, "截图之后界面已经换了，没有点击。请重新看屏幕。", observeQuiet())
+        try {
+            // l10n:keep agent screen result
+            if (unavailable(cap)) return ActionResult(false, "这一屏读不到内容（可能受敏感视图策略限制），不盲点。请 handoff。", toSnapshot(publish(cap, false)))
+            // l10n:keep agent screen result
+            if (!observation(cap).reusableCoordinates(snap.observation)) return ActionResult(false, "无法确认当前界面仍与截图一致，没有点击。请重新看屏幕。", toSnapshot(publish(cap, false)))
+        } finally { cap.recycle() }
         val before = clock.count
         // l10n:keep agent screen result
         if (!actuator.tap(point.first, point.second)) return ActionResult(false, "系统没有接受这次点击。", observeQuiet())
         // l10n:keep agent screen result
-        return after(before, snap, gen, "已点击截图上的 (${a.x}, ${a.y})。")
+        return after(before, snap, gen, "已提交点击截图上的 (${a.x}, ${a.y})。")
     }
 
     /** Waits for the UI to settle, reads the new screen (`+` marks) and says whether anything changed. */
@@ -496,29 +501,19 @@ internal class MainScreenDriver(private val service: PhoneA11yService, private v
         val cap = try { settledCapture(previous, gen) } catch (e: InterruptedException) { throw e } catch (e: Exception) {
             Log.w(TAG, "observation after an accepted action failed", e)
             // l10n:keep agent screen result
-            return ActionResult(true, "$message（动作已执行，但没能读到新屏幕。）")
+            return ActionResult(true, "$message（动作已提交，但没能读到新屏幕，无法验证结果。）")
         }
         try {
             val snap = publish(cap, false)
-            val sameApp = previous != null && previous.packageName == snap.packageName
-            // A different app in front is a change even when both trees happen to be empty.
-            val changed = previous != null && (!sameApp || previous.fingerprints != snap.fingerprints)
-            // The IME is part of the screen: `key back` that only closes the keyboard is a change,
-            // even though no node moved. The main window's bounds move with it.
-            val keyboard = when {
-                !sameApp -> null
-                previous!!.keyboardShown && !snap.keyboardShown -> ScreenVerdict.KEYBOARD_HIDDEN
-                !previous!!.keyboardShown && snap.keyboardShown -> ScreenVerdict.KEYBOARD_SHOWN
-                else -> null
-            }
-            val insets = sameApp && previous!!.mainWindowBounds != snap.mainWindowBounds
-            // Both sides need readable elements for "unchanged" to mean anything.
-            val comparable = previous != null && previous.screen.elements.isNotEmpty() &&
-                snap.screen.elements.isNotEmpty() && !previous.unreadable && !snap.unreadable
-            // l10n:keep agent screen result
-            val note = ScreenVerdict.note(comparable = comparable, changed = changed || insets, keyboard = keyboard, scrolled = scrolled)
-            // 上一屏没变的部分不再重复(见 ScreenDigest);不变时只回一行。
-            val text = ScreenDigest.text(previous?.id, previous?.screen, snap.id, snap.screen)
+            val old = previous?.observation
+            val observation = snap.observation
+            val comparable = old != null && observation.comparableTo(old)
+            val changed = old != null && observation.changedFrom(old)
+            val keyboard = old?.let { observation.keyboardChange(it) }
+            // Missing content still needs an explicit warning, even when app/window/IME changed.
+            val note = ScreenVerdict.note(comparable = comparable, changed = changed, keyboard = keyboard, scrolled = scrolled)
+            val canReuse = comparable && observation.sameContext(old) && observation.keyboardShown == old.keyboardShown
+            val text = ScreenDigest.text(previous?.id, previous?.screen, snap.id, snap.screen, canReuse = canReuse, observationChanged = changed)
             return ActionResult(true, message + note, toSnapshot(snap, text))
         } finally { cap.recycle() }
     }
@@ -582,6 +577,13 @@ internal class MainScreenDriver(private val service: PhoneA11yService, private v
 
     private fun capture(): Capture = TreeCapture.capture(service, screenBox(), ownPackage, CAPTURE_MS)
 
+    private fun unavailable(cap: Capture) = WindowContent.unavailable(cap.hiddenWindowTitle != null, cap.unreadableWindowTitle != null, cap.windows)
+
+    private fun observation(cap: Capture) = ScreenObservation(
+        cap.packageName, cap.windows, cap.screen, cap.keyboardShown, unavailable(cap), cap.truncated || cap.partial,
+        ScreenFormat.observationKeys(cap.windows),
+    )
+
     private fun locate(cap: Capture, el: ScreenElement): IndexedElement? =
         ScreenFormat.index(cap.windows).firstOrNull { it.fingerprint == el.fingerprint }
 
@@ -604,10 +606,12 @@ internal class MainScreenDriver(private val service: PhoneA11yService, private v
         if (protectedPage && !lifted.systemPages) note("protected", "提示：这是系统权限 / 安全相关页面，DSH 只看不操作；需要的话用 handoff 交给用户。")
         // l10n:keep agent screen result
         if (cap.truncated) note("truncated", "提示：页面元素太多，只读了一部分。")
+        // l10n:keep agent screen result
+        if (cap.partial) note("partial", "提示：部分窗口读不到，当前观测不完整。")
         if (cap.hiddenWindowTitle != null) {
             val name = cap.hiddenWindowTitle.takeIf { it.isNotBlank() }?.let { "「$it」" } ?: ""
             // l10n:keep agent screen result
-            note("hidden", "提示：前台页面${name}不向 DSH 开放（应用标成了敏感页面）。读不到也点不了，需要就 handoff。")
+            note("hidden", "提示：当前无法读取前台页面${name}（可能受敏感视图策略限制）。读不到也点不了，需要就 handoff。")
         // l10n:keep agent screen result
         } else if (cap.unreadableWindowTitle != null) {
             val name = cap.unreadableWindowTitle.takeIf { it.isNotBlank() }?.let { "「$it」" } ?: ""
@@ -635,9 +639,8 @@ internal class MainScreenDriver(private val service: PhoneA11yService, private v
             formatted = format(notes)
         }
         val snap = Snapshot(
-            id, formatted, pkg, appLabel, protectedPage, cap.ownAppInFront, cap.windows.lastOrNull()?.id,
-            cap.hiddenWindowTitle != null, cap.unreadableWindowTitle != null, cap.keyboardShown,
-            cap.windows.lastOrNull()?.bounds, noteKeys,
+            id, formatted, pkg, appLabel, protectedPage, cap.ownAppInFront,
+            cap.hiddenWindowTitle != null, cap.unreadableWindowTitle != null, observation(cap), noteKeys,
         )
         latest = snap
         return snap

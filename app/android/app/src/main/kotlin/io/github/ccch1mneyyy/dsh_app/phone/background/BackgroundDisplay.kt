@@ -174,7 +174,7 @@ class BackgroundDisplay(
 
     private fun toResult(response: Bundle, okMessage: String): ActionResult {
         val ok = response.getBoolean(Proto.OK)
-        val message = if (ok) okMessage else Reasons.of(response.getString(Proto.ERROR))
+        val message = if (ok) okMessage else Reasons.of(response.getString(Proto.ERROR), response.getString(Proto.ERROR_DETAIL))
         val snap = if (response.containsKey(Proto.COUNT) || response.getBoolean(Proto.SECURE))
             snapshot(response, markNew = true) else null
         return ActionResult(ok, message, snap)

@@ -13,6 +13,7 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.os.Build
+import android.os.SystemClock
 import android.view.Display
 import io.github.ccch1mneyyy.dsh_app.phone.SensitiveWords
 import java.io.ByteArrayOutputStream
@@ -101,8 +102,8 @@ internal class ScreenShooter(private val service: AccessibilityService, private 
                         val software = hardware?.copy(Bitmap.Config.ARGB_8888, false)
                         hardware?.recycle()
                         // l10n:keep agent screenshot result
-                        // ScreenshotResult.getTimestamp(): nanos on the System.nanoTime() clock.
-                        val wallClock = System.currentTimeMillis() - (System.nanoTime() - screenshot.timestamp) / 1_000_000L
+                        // ScreenshotResult.getTimestamp(): milliseconds on the uptime clock.
+                        val wallClock = ScreenshotClock.wallTime(screenshot.timestamp, SystemClock.uptimeMillis(), System.currentTimeMillis())
                         Raw(software, false, if (software == null) "截图失败" else null, wallClock)
                     } catch (_: Throwable) {
                         // l10n:keep agent screenshot result

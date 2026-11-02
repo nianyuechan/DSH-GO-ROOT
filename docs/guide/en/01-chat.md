@@ -65,7 +65,15 @@ Question cards: pick an answer, or tap **Other answer** to write your own, then 
 
 Approval cards: check the command, files and reason, then tap **Allow once** or **Decline**.
 
-**Allow for chat** approves everything for the rest of this chat, including requests already waiting. **Auto-approving** appears above the composer; tap it to turn it off. Approvals are asked again after the app restarts. A chat with **Full access** or **Auto review** also shows a capsule above the composer; tap it to change the chat's permissions. To skip approvals in all new chats on this phone's engine, set the new-chat default to **Full access** under Permissions in [Settings](10-settings.md).
+**Allow for chat** approves ordinary tool approvals for the rest of this chat, including requests already waiting. **Auto-approving** appears above the composer; tap it to turn it off. Approvals are asked again after the app restarts. A chat with **Full access** or **Auto review** also shows a capsule above the composer; tap it to change the chat's permissions. To skip approvals in all new chats on this phone's engine, set the new-chat default to **Full access** under Permissions in [Settings](10-settings.md).
+
+### Separate authorization for scheduled tasks
+
+With the patched bundled engine, creating a task or changing its name, instructions or timing requires a separate confirmation. The question shows the complete instructions, rule, time zone and resolved trigger time. Review them, select "授权 / Authorize", then submit. Full access, Auto review and chat-wide auto-approval cannot replace this confirmation. While saving in the task editor, the confirmation appears there; tasks requested in a chat are confirmed in that chat.
+
+Rejection, no answer, a two-minute authorization timeout or an unavailable confirmation interface does not save the change. A trigger time that has already passed must be proposed and confirmed again. A rejected edit leaves the existing task unchanged. Cancelling a save, leaving the editor or switching hosts attempts to reject that page's outstanding requests; it cannot undo an operation another client already confirmed first.
+
+Authorization covers only the displayed task, not arbitrary future actions. It does not reduce the target chat's permissions or replace system isolation of credentials and tool execution. Existing tasks are not retrospectively authorized; inspect them and delete any you do not recognize. Remote hosts need the same engine fix: updating only the phone UI does not enforce authorization on an unpatched remote engine.
 
 ## Copy, quote and regenerate
 
