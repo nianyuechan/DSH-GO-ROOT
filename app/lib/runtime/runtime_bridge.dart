@@ -320,6 +320,68 @@ class RuntimeStatus {
   );
 }
 
+/// One device-tuning knob as the native side reads it.
+class TuningItem {
+  const TuningItem({
+    required this.id,
+    required this.title,
+    required this.detail,
+    required this.persistent,
+    required this.dangerous,
+    required this.applied,
+  });
+
+  final String id;
+  final String title;
+  final String detail;
+
+  /// Whether the ROM keeps this across reboots without re-applying.
+  final bool persistent;
+
+  /// Changes what the device allows other apps to do; never applied without a confirmation.
+  final bool dangerous;
+
+  /// The device's own answer, read back after any change — not the intent.
+  final bool applied;
+
+  factory TuningItem.fromMap(Map<Object?, Object?> map) => TuningItem(
+    id: map['id'] as String? ?? '',
+    title: map['title'] as String? ?? '',
+    detail: map['detail'] as String? ?? '',
+    persistent: map['persistent'] == true,
+    dangerous: map['dangerous'] == true,
+    applied: map['applied'] == true,
+  );
+}
+
+/// What one tuning action ended up as after a run.
+class TuningResult {
+  const TuningResult({
+    required this.id,
+    required this.alreadyApplied,
+    required this.applied,
+    this.reason,
+  });
+
+  final String id;
+
+  /// It was already in place, so nothing was written.
+  final bool alreadyApplied;
+
+  /// The write ran and the read-back agrees.
+  final bool applied;
+
+  /// Stable code when this run did not end applied (`readFailed`, `writeFailed`, …).
+  final String? reason;
+
+  factory TuningResult.fromMap(Map<Object?, Object?> map) => TuningResult(
+    id: map['id'] as String? ?? '',
+    alreadyApplied: map['alreadyApplied'] == true,
+    applied: map['applied'] == true,
+    reason: map['reason'] as String?,
+  );
+}
+
 /// What "恢复上次正常的配置" would change in the main profile.
 class LastKnownGood {
   const LastKnownGood({
@@ -629,6 +691,35 @@ class RuntimeBridge {
   Future<void> setDirectEngine(bool enabled) => _methods.invokeMethod<void>('setDirectEngine', {'enabled': enabled});
 
   Future<void> setRootEngine(bool enabled) => _methods.invokeMethod<void>('setRootEngine', {'enabled': enabled});
+
+  /// Device tuning that keeps a root engine alive on aggressive ROMs. Each entry is one
+  /// knob with its current state; running it changes the device, so the UI confirms first.
+  Future<List<TuningItem>> tuningStatus() async {
+    final rows = await _methods.invokeListMethod<Object?>('tuningStatus') ?? const [];
+    return rows
+        .whereType<Map<Object?, Object?>>()
+        .map(TuningItem.fromMap)
+        .toList(growable: false);
+  }
+
+  /// Applies every offered action that is not already in place, unless it changes the
+  /// device's security posture and [allowDangerous] is false.
+  Future<List<TuningResult>> applyTuning({bool allowDangerous = false}) async {
+    final rows = await _methods.invokeListMethod<Object?>(
+      'applyTuning',
+      {'allowDangerous': allowDangerous},
+    ) ?? const [];
+    return rows
+        .whereType<Map<Object?, Object?>>()
+        .map(TuningResult.fromMap)
+        .toList(growable: false);
+  }
+
+  /// Appends this app's service to the accessibility list without touching the others.
+  Future<TuningResult?> applyAccessibilityTuning(String service) async {
+    final row = await _methods.invokeMethod<Object?>('applyAccessibilityTuning', {'service': service});
+    return row is Map<Object?, Object?> ? TuningResult.fromMap(row) : null;
+  }
 
   /// Output around the last failure, tokens masked.
   Future<List<String>> failureLog() async => (await _methods.invokeListMethod<String>('failureLog')) ?? const [];

@@ -9841,6 +9841,49 @@ class L10nZh extends L10n {
   String get phoneRootEntryMissing => '运行环境缺少 dsh 入口';
 
   @override
+  String get tuningTitle => '让 root 引擎活得更久';
+
+  @override
+  String get tuningApplyHint => '逐项应用下面的设置。每项都会先读当前值，重复执行不会有副作用。';
+
+  @override
+  String tuningApply(int count) {
+    return '应用 $count 项设置';
+  }
+
+  @override
+  String get tuningApplyFailed => '未能执行调优，请确认 root 仍然可用。';
+
+  @override
+  String get tuningAllInPlace => '下面每一项都已经生效。';
+
+  @override
+  String get tuningNothingToDo => '没有需要应用的项';
+
+  @override
+  String get tuningAllApplied => '已应用。设备确认每一项都已生效。';
+
+  @override
+  String tuningSomeFailed(int count) {
+    return '有 $count 项没有生效——设备读回来仍然是关闭状态。';
+  }
+
+  @override
+  String get tuningStateApplied => '已开';
+
+  @override
+  String get tuningStatePending => '未开';
+
+  @override
+  String get tuningNotPersistent => '重启后不保留，每次启动会重新应用。';
+
+  @override
+  String get tuningAllowDangerous => '允许会改变安全姿态的操作';
+
+  @override
+  String get tuningAllowDangerousHint => '允许执行无障碍那一项。它会改变本应用能读到的屏幕内容，所以默认关闭。';
+
+  @override
   String get phoneLaunchStartFailed => '未能完成启动';
 
   @override

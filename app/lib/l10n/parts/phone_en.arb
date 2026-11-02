@@ -445,6 +445,33 @@
   "phoneRootEnvMissing": "The runtime is missing env",
   "phoneRootShellMissing": "The runtime is missing a shell",
   "phoneRootEntryMissing": "The runtime is missing the dsh entry",
+  "tuningTitle": "Keep the root engine alive",
+  "tuningApplyHint": "Applies the settings below one by one. Each is read first, so running it twice is harmless.",
+  "tuningApply": "Apply {count} setting(s)",
+  "@tuningApply": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "tuningApplyFailed": "Could not run the tuning. Check that root is still granted.",
+  "tuningAllInPlace": "Every setting below is already in place.",
+  "tuningNothingToDo": "Nothing left to apply",
+  "tuningAllApplied": "Applied. The device confirms every setting.",
+  "tuningSomeFailed": "{count} setting(s) did not take effect — the device still reports them as off.",
+  "@tuningSomeFailed": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "tuningStateApplied": "On",
+  "tuningStatePending": "Off",
+  "tuningNotPersistent": "Not kept across reboots; applied again on each launch.",
+  "tuningAllowDangerous": "Allow security-changing actions",
+  "tuningAllowDangerousHint": "Lets the accessibility action run. It changes what this app can read on screen, so it stays off until you switch it on.",
   "phoneLaunchStartFailed": "Didn't finish starting",
   "phoneLaunchExited": "Exit code {code}",
   "@phoneLaunchExited": {

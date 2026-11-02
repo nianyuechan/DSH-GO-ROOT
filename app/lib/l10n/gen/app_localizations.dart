@@ -18158,6 +18158,84 @@ abstract class L10n {
   /// **'运行环境缺少 dsh 入口'**
   String get phoneRootEntryMissing;
 
+  /// No description provided for @tuningTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'让 root 引擎活得更久'**
+  String get tuningTitle;
+
+  /// No description provided for @tuningApplyHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'逐项应用下面的设置。每项都会先读当前值，重复执行不会有副作用。'**
+  String get tuningApplyHint;
+
+  /// No description provided for @tuningApply.
+  ///
+  /// In zh, this message translates to:
+  /// **'应用 {count} 项设置'**
+  String tuningApply(int count);
+
+  /// No description provided for @tuningApplyFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'未能执行调优，请确认 root 仍然可用。'**
+  String get tuningApplyFailed;
+
+  /// No description provided for @tuningAllInPlace.
+  ///
+  /// In zh, this message translates to:
+  /// **'下面每一项都已经生效。'**
+  String get tuningAllInPlace;
+
+  /// No description provided for @tuningNothingToDo.
+  ///
+  /// In zh, this message translates to:
+  /// **'没有需要应用的项'**
+  String get tuningNothingToDo;
+
+  /// No description provided for @tuningAllApplied.
+  ///
+  /// In zh, this message translates to:
+  /// **'已应用。设备确认每一项都已生效。'**
+  String get tuningAllApplied;
+
+  /// No description provided for @tuningSomeFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'有 {count} 项没有生效——设备读回来仍然是关闭状态。'**
+  String tuningSomeFailed(int count);
+
+  /// No description provided for @tuningStateApplied.
+  ///
+  /// In zh, this message translates to:
+  /// **'已开'**
+  String get tuningStateApplied;
+
+  /// No description provided for @tuningStatePending.
+  ///
+  /// In zh, this message translates to:
+  /// **'未开'**
+  String get tuningStatePending;
+
+  /// No description provided for @tuningNotPersistent.
+  ///
+  /// In zh, this message translates to:
+  /// **'重启后不保留，每次启动会重新应用。'**
+  String get tuningNotPersistent;
+
+  /// No description provided for @tuningAllowDangerous.
+  ///
+  /// In zh, this message translates to:
+  /// **'允许会改变安全姿态的操作'**
+  String get tuningAllowDangerous;
+
+  /// No description provided for @tuningAllowDangerousHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'允许执行无障碍那一项。它会改变本应用能读到的屏幕内容，所以默认关闭。'**
+  String get tuningAllowDangerousHint;
+
   /// No description provided for @phoneLaunchStartFailed.
   ///
   /// In zh, this message translates to:

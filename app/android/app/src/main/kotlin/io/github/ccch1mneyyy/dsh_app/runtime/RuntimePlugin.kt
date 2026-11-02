@@ -10,6 +10,8 @@ import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import io.flutter.embedding.engine.plugins.FlutterPlugin
+import io.github.ccch1mneyyy.dsh_app.root.SystemTuning
+import io.github.ccch1mneyyy.dsh_app.root.TuningCatalog
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
 import io.flutter.plugin.common.EventChannel
@@ -33,6 +35,31 @@ class RuntimePlugin :
     private var activity: ActivityPluginBinding? = null
     private var pendingStorageResult: MethodChannel.Result? = null
     private var managedSkillOwner: ManagedSkillOwner? = null
+
+    /** Tuning runs `su`; one worker keeps those from stacking on the platform thread. */
+    private val worker = java.util.concurrent.Executors.newSingleThreadExecutor { task ->
+        Thread(task, "dsh-runtime-io").apply { isDaemon = true }
+    }
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+
+    /** Runs [block] off the platform thread and answers on it. */
+    private fun async(result: MethodChannel.Result, block: () -> Any?) {
+        worker.execute {
+            val value = try {
+                Result.success(block())
+            } catch (e: Throwable) {
+                Result.failure(e)
+            }
+            main.post {
+                value.fold(
+                    onSuccess = { result.success(it) },
+                    onFailure = {
+                        result.error("runtime_failed", it.message ?: it.javaClass.simpleName, null)
+                    },
+                )
+            }
+        }
+    }
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         appContext = binding.applicationContext
@@ -154,6 +181,31 @@ class RuntimePlugin :
                 } catch (error: IllegalStateException) {
                     result.error("launch_method_unavailable", error.message, null)
                 }
+            }
+            // Tuning runs su, so it goes off the platform thread; the result is the list of
+            // outcomes, including the ones that did not end applied.
+            "tuningStatus" -> async(result) {
+                TuningCatalog.offered { command -> SystemTuning.RootShell.read(command) }
+                    .mapNotNull { action ->
+                        val observed = SystemTuning.RootShell.read(action.read) ?: return@mapNotNull null
+                        mapOf(
+                            "id" to action.id,
+                            "title" to action.title,
+                            "detail" to action.detail,
+                            "persistent" to action.persistent,
+                            "dangerous" to action.dangerous,
+                            "applied" to action.isApplied(observed),
+                        )
+                    }
+            }
+            "applyTuning" -> async(result) {
+                val allowDangerous = call.argument<Boolean>("allowDangerous") == true
+                SystemTuning.applyAll(allowDangerous = allowDangerous).map { it.map() }
+            }
+            "applyAccessibilityTuning" -> async(result) {
+                val service = call.argument<String>("service").orEmpty()
+                if (service.isEmpty()) null
+                else SystemTuning.applyAccessibility(service).map()
             }
             "failureLog" -> result.success(controller.failureLog())
             "batteryExempt" -> {

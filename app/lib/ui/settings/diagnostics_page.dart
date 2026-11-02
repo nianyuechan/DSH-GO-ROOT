@@ -22,6 +22,7 @@ import '../shell/page_frame.dart';
 import '../theme/app_icons.dart';
 import 'settings_widgets.dart';
 import 'direct_engine_settings.dart';
+import 'engine_tuning_settings.dart';
 import 'root_engine_settings.dart';
 import '../common/brief_notice.dart';
 
@@ -156,6 +157,8 @@ class DiagnosticsPage extends ConsumerWidget {
         if (status.rootEngineAvailable || status.rootEngineEnabled) ...[
           const SizedBox(height: 24),
           const RootEngineSettings(),
+          const SizedBox(height: 24),
+          const EngineTuningSettings(),
         ],
       ],
     );

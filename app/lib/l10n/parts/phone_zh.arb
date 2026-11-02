@@ -660,6 +660,33 @@
   "phoneRootEnvMissing": "运行环境缺少 env",
   "phoneRootShellMissing": "运行环境缺少 shell",
   "phoneRootEntryMissing": "运行环境缺少 dsh 入口",
+  "tuningTitle": "让 root 引擎活得更久",
+  "tuningApplyHint": "逐项应用下面的设置。每项都会先读当前值，重复执行不会有副作用。",
+  "tuningApply": "应用 {count} 项设置",
+  "@tuningApply": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "tuningApplyFailed": "未能执行调优，请确认 root 仍然可用。",
+  "tuningAllInPlace": "下面每一项都已经生效。",
+  "tuningNothingToDo": "没有需要应用的项",
+  "tuningAllApplied": "已应用。设备确认每一项都已生效。",
+  "tuningSomeFailed": "有 {count} 项没有生效——设备读回来仍然是关闭状态。",
+  "@tuningSomeFailed": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "tuningStateApplied": "已开",
+  "tuningStatePending": "未开",
+  "tuningNotPersistent": "重启后不保留，每次启动会重新应用。",
+  "tuningAllowDangerous": "允许会改变安全姿态的操作",
+  "tuningAllowDangerousHint": "允许执行无障碍那一项。它会改变本应用能读到的屏幕内容，所以默认关闭。",
   "phoneLaunchStartFailed": "未能完成启动",
   "phoneLaunchExited": "退出码 {code}",
   "@phoneLaunchExited": {

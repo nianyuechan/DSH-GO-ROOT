@@ -10366,6 +10366,51 @@ class L10nEn extends L10n {
   String get phoneRootEntryMissing => 'The runtime is missing the dsh entry';
 
   @override
+  String get tuningTitle => 'Keep the root engine alive';
+
+  @override
+  String get tuningApplyHint =>
+      'Applies the settings below one by one. Each is read first, so running it twice is harmless.';
+
+  @override
+  String tuningApply(int count) {
+    return 'Apply $count setting(s)';
+  }
+
+  @override
+  String get tuningApplyFailed => 'Could not run the tuning. Check that root is still granted.';
+
+  @override
+  String get tuningAllInPlace => 'Every setting below is already in place.';
+
+  @override
+  String get tuningNothingToDo => 'Nothing left to apply';
+
+  @override
+  String get tuningAllApplied => 'Applied. The device confirms every setting.';
+
+  @override
+  String tuningSomeFailed(int count) {
+    return '$count setting(s) did not take effect — the device still reports them as off.';
+  }
+
+  @override
+  String get tuningStateApplied => 'On';
+
+  @override
+  String get tuningStatePending => 'Off';
+
+  @override
+  String get tuningNotPersistent => 'Not kept across reboots; applied again on each launch.';
+
+  @override
+  String get tuningAllowDangerous => 'Allow security-changing actions';
+
+  @override
+  String get tuningAllowDangerousHint =>
+      'Lets the accessibility action run. It changes what this app can read on screen, so it stays off until you switch it on.';
+
+  @override
   String get phoneLaunchStartFailed => 'Didn\'t finish starting';
 
   @override

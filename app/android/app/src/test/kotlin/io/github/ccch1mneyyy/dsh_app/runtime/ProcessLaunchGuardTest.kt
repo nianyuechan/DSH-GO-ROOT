@@ -121,6 +121,9 @@ class ProcessLaunchGuardTest {
         // Adoption reads the chroot engine's /proc facts as root: the engine runs in the
         // root manager's SELinux domain, which this app cannot read directly.
         "app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/runtime/RuntimeController.kt",
+        // Device tuning runs the catalog's fixed command strings through `su -c`; no caller
+        // text reaches it, which is the property this guard exists to protect.
+        "app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/root/SystemTuning.kt",
     )
     private val localHelper = "app/lib/remote/ssh/remote_shell.dart"
 
