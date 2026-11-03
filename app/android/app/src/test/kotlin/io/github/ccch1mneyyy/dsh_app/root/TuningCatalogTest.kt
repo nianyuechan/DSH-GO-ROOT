@@ -60,6 +60,14 @@ class TuningCatalogTest {
         assertFalse(standby.persistent)
     }
 
+    @Test
+    fun `standby is read and written for the current user on HyperOS`() {
+        val standby = TuningCatalog.standbyBucket
+        assertTrue("read must target user 0", standby.read.contains("--user 0"))
+        assertTrue("write must target user 0", standby.apply!!.contains("--user 0"))
+        assertTrue(standby.apply!!.endsWith("io.github.ccch1mneyyy.dsh_app active"))
+    }
+
     // ---- MIUI -------------------------------------------------------------
 
     @Test
@@ -98,6 +106,32 @@ class TuningCatalogTest {
         }
         assertFalse(offered.any { it.id == TuningCatalog.miuiPowerKeeper.id })
         assertTrue(offered.any { it.id == TuningCatalog.phantom.id })
+    }
+
+    @Test
+    fun `a null MIUI setting is not offered but an empty accessibility list is`() {
+        val offered = TuningCatalog.offered { command ->
+            if (command.startsWith("settings get ")) "null" else "0"
+        }
+        assertFalse(offered.any { it.id == TuningCatalog.miuiPowerKeeper.id })
+        assertTrue(offered.any { it.id == TuningCatalog.accessibilityAutoGrant.id })
+        assertTrue(offered.any { it.id == TuningCatalog.phantom.id })
+    }
+
+    @Test
+    fun `a blank MIUI setting is not offered but a blank accessibility list is`() {
+        for (blank in listOf("", " \n\t")) {
+            val offered = TuningCatalog.offered { command ->
+                when {
+                    command.startsWith("settings get ") && ';' !in command -> blank
+                    command == TuningCatalog.phantom.read -> blank
+                    else -> "0"
+                }
+            }
+            assertFalse(offered.any { it.id == TuningCatalog.miuiPowerKeeper.id })
+            assertTrue(offered.any { it.id == TuningCatalog.accessibilityAutoGrant.id })
+            assertTrue("compound reads are not missing settings", offered.any { it.id == TuningCatalog.phantom.id })
+        }
     }
 
     @Test

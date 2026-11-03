@@ -13,10 +13,8 @@ class RuntimeResetKeepTest {
     private val base = File(files, "runtime")
     private val retired = File(files, "runtime.reset")
     private val keep = File(files, "runtime-keep")
-    private val locked = mutableListOf<File>()
 
     @After fun cleanUp() {
-        locked.forEach { it.setWritable(true) }
         files.deleteRecursively()
     }
 
@@ -49,11 +47,15 @@ class RuntimeResetKeepTest {
     }
 
     /** What install() does after a reset: extract staging, settle, activate with the restore. */
-    private fun install(version: String = "r1", dropKept: Boolean = false) {
-        settleReset(retired, keep, dropKept)
+    private fun install(
+        version: String = "r1",
+        dropKept: Boolean = false,
+        move: (File, File) -> Boolean = { from, to -> from.renameTo(to) },
+    ) {
+        settleReset(retired, keep, dropKept, move = move)
         write(base, "staging/bin/sh", "staging/etc/os-release")
         File(base, "staging/root/.dsh").mkdirs()
-        activateRootfs(base, version, keep, dropKept, sync = {})
+        activateRootfs(base, version, keep, dropKept, sync = {}, syncDirectory = {}, move = move)
     }
 
     private fun assertKeepFailed(block: () -> Unit) {
@@ -63,14 +65,6 @@ class RuntimeResetKeepTest {
         } catch (e: KeepFailed) {
             assertTrue(e.message, e.message!!.startsWith("keep: "))
         }
-    }
-
-    /** Makes [dir] refuse renames into and out of it (skipped where permissions don't bind, as root). */
-    private fun lock(dir: File) {
-        dir.mkdirs()
-        assertTrue(dir.setWritable(false))
-        locked += dir
-        assumeFalse("permissions are not enforced", dir.canWrite())
     }
 
     private fun assertSettled() {
@@ -129,6 +123,19 @@ class RuntimeResetKeepTest {
         for (gone in ResetKeep.ALL) assertFalse(gone, File(base, "rootfs/$gone").exists())
     }
 
+    @Test fun cleanupFailureKeepsTheRuntimeBeforeAnyResetMove() {
+        installed()
+        val failure = IllegalStateException("mount cleanup failed")
+        try {
+            retireRuntime(base, retired, keep, ui, beforeRetire = { throw failure })
+            fail("expected cleanup failure")
+        } catch (e: IllegalStateException) {
+            assertSame(failure, e)
+        }
+        assertTrue(File(base, "rootfs/bin/sh").isFile)
+        assertFalse(retired.exists())
+    }
+
     @Test fun keptCopiesReplaceFreshOnes() {
         installed()
         retireRuntime(base, retired, keep, ui)
@@ -142,6 +149,7 @@ class RuntimeResetKeepTest {
     }
 
     @Test fun symlinksMoveAsLinksAndAreNotFollowedWhenDeleting() {
+        assumeFalse("POSIX symlinks are not available in this Windows JVM", System.getProperty("os.name").startsWith("Windows"))
         installed()
         val outside = File(files, "outside").apply { mkdirs() }
         File(outside, "precious").writeText("precious")
@@ -181,19 +189,23 @@ class RuntimeResetKeepTest {
 
     @Test fun aFailedMoveKeepsTheRetiredRuntimeUntilItCanFinish() {
         installed()
-        lock(File(keep, "root/.agents")) // the shared skills cannot move in
-        assertKeepFailed { retireRuntime(base, retired, keep, ui) }
+        var failSharedSkills = true
+        val move: (File, File) -> Boolean = { from, to ->
+            if (failSharedSkills && from == File(retired, "rootfs/root/.agents/skills")) false
+            else from.renameTo(to)
+        }
+        assertKeepFailed { retireRuntime(base, retired, keep, ui, move = move) }
         assertFalse(base.exists()) // runtime reads as not installed
         assertEquals("SKILL.md", File(retired, "rootfs/root/.agents/skills/shared/SKILL.md").readText())
         assertEquals("ui.json", File(keep, "root/.dsh/dsh-go/ui.json").readText())
 
         // Still failing: the install stops before touching anything.
-        assertKeepFailed { install() }
+        assertKeepFailed { install(move = move) }
         assertFalse(File(base, "rootfs.version").exists())
         assertTrue(retired.exists())
 
-        File(keep, "root/.agents").setWritable(true)
-        install()
+        failSharedSkills = false
+        install(move = move)
         assertSettled()
         assertEquals("SKILL.md", text("root/.agents/skills/shared/SKILL.md"))
         assertEquals("ui.json", text("root/.dsh/dsh-go/ui.json"))
@@ -202,9 +214,13 @@ class RuntimeResetKeepTest {
     @Test fun aFailedRestorePutsTheFreshCopyBackAndKeepsTheRest() {
         installed()
         retireRuntime(base, retired, keep, ui)
-        lock(File(keep, "root/.agents")) // the shared skills cannot move out
+        var failSharedSkills = true
+        val move: (File, File) -> Boolean = { from, to ->
+            if (failSharedSkills && from == File(keep, "root/.agents/skills")) false
+            else from.renameTo(to)
+        }
         write(base, "staging/root/.agents/skills/shipped/SKILL.md")
-        assertKeepFailed { activateRootfs(base, "r1", keep, sync = {}) }
+        assertKeepFailed { activateRootfs(base, "r1", keep, sync = {}, move = move) }
         // Not installed, nothing lost: what moved is in place, the rest still kept, the fresh copy back.
         assertFalse(File(base, "rootfs.version").exists())
         assertEquals("ui.json", text("root/.dsh/dsh-go/ui.json"))
@@ -212,8 +228,8 @@ class RuntimeResetKeepTest {
         assertEquals("SKILL.md", text("root/.agents/skills/shipped/SKILL.md"))
 
         // The retry extracts again; the user's home (with what was restored) carries over.
-        File(keep, "root/.agents").setWritable(true)
-        install()
+        failSharedSkills = false
+        install(move = move)
         assertSettled()
         assertEquals("ui.json", text("root/.dsh/dsh-go/ui.json"))
         assertEquals("SKILL.md", text("root/.agents/skills/shared/SKILL.md"))
@@ -223,13 +239,15 @@ class RuntimeResetKeepTest {
     @Test fun aRestoreThatCannotFinishIsDroppedOnRequest() {
         installed()
         retireRuntime(base, retired, keep, ui)
-        lock(File(keep, "root/.agents")) // the shared skills cannot move out
+        val move: (File, File) -> Boolean = { from, to ->
+            if (from == File(keep, "root/.agents/skills")) false else from.renameTo(to)
+        }
         write(base, "staging/root/.agents/skills/shipped/SKILL.md")
-        assertKeepFailed { activateRootfs(base, "r1", keep, sync = {}) }
+        assertKeepFailed { activateRootfs(base, "r1", keep, sync = {}, move = move) }
         write(files, "runtime-keep.dropped/root/old") // left by an earlier drop cut short
 
         // 「不保留，继续安装」: what can move goes back, the rest is given up, the install finishes.
-        install(dropKept = true)
+        install(dropKept = true, move = move)
         assertSettled()
         assertFalse(File(files, "runtime-keep.dropped").exists())
         assertEquals("ui.json", text("root/.dsh/dsh-go/ui.json"))
@@ -240,11 +258,13 @@ class RuntimeResetKeepTest {
 
     @Test fun aKeepThatCannotMoveOutIsDroppedOnRequest() {
         installed()
-        lock(File(keep, "root/.agents"))
-        assertKeepFailed { retireRuntime(base, retired, keep, ui) }
+        val move: (File, File) -> Boolean = { from, to ->
+            if (from == File(retired, "rootfs/root/.agents/skills")) false else from.renameTo(to)
+        }
+        assertKeepFailed { retireRuntime(base, retired, keep, ui, move = move) }
         assertTrue(retired.exists())
 
-        install(dropKept = true)
+        install(dropKept = true, move = move)
         assertSettled()
         assertEquals("ui.json", text("root/.dsh/dsh-go/ui.json"))
         assertEquals("SKILL.md", text("root/.dsh/skills/mine/SKILL.md"))
@@ -330,7 +350,7 @@ class RuntimeResetKeepTest {
     @Test fun anUpgradeWithoutAKeepLeavesTheHomeAlone() {
         installed()
         write(base, "staging/bin/sh")
-        activateRootfs(base, "r2", keep, sync = {})
+        activateRootfs(base, "r2", keep, sync = {}, syncDirectory = {})
         assertEquals("ui.json", text("root/.dsh/dsh-go/ui.json"))
         assertEquals("notes", text("root/workspace/notes"))
         assertEquals("r2", File(base, "rootfs.version").readText())

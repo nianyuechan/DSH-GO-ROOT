@@ -14,6 +14,7 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.nio.file.Files
 import java.nio.file.NoSuchFileException
+import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 
 /**
@@ -25,6 +26,25 @@ class DshProcess(
     private val manifest: RuntimeManifest,
     private val rootfs: File,
     private val listener: Listener,
+    private val adoptedLiveness: (Int) -> AdoptedEngine.Liveness = { AdoptedEngine.Liveness.Unknown },
+    private val adoptedConnect: (Int) -> Boolean = { canConnect(it) },
+    private val adoptedSleep: (Long) -> Unit = { Thread.sleep(it) },
+    private val adoptedUid: () -> Int = { AndroidProcess.myUid() },
+    private val adoptedStop: ((Int) -> Unit)? = null,
+    private val processReaper: (() -> Boolean)? = null,
+    private val mountCleanup: (List<String>) -> Boolean = { RootLaunch.cleanup(it) },
+    private val persistPendingMounts: (EngineHandoff.PendingMounts) -> Unit = { pending ->
+        EngineHandoff.savePending(context.filesDir, pending)
+    },
+    private val clearPendingMounts: () -> Unit = { EngineHandoff.clearPending(context.filesDir) },
+    private val initialCleanupPids: Set<Int> = emptySet(),
+    private val runtimeProcessReader: RuntimeProcessReader? = null,
+    private val processKiller: (Int, Int) -> Unit = { pid, signal -> Os.kill(pid, signal) },
+    private val appPid: () -> Int = { AndroidProcess.myPid() },
+    private val processStarter: (ProcessBuilder) -> Process = { it.start() },
+    private val rootTerminate: (List<Int>) -> Boolean = { RootLaunch.terminate(it) },
+    private val rootResidual: (List<String>) -> List<String> = { RootLaunch.residual(it) },
+    private val stopTimeoutMillis: Long = 15_000,
 ) {
     interface Listener {
         fun onLog(line: String, stream: String)
@@ -32,24 +52,41 @@ class DshProcess(
         fun onExit(source: DshProcess, code: Int, expected: Boolean)
         /** The start is busy turning PRoot's fake hard links into real files (true), or done (false). */
         fun onTidying(active: Boolean) {}
+        /** A stop has outlived [DshProcess.stopTimeoutMillis]; the caller must stop waiting. */
+        fun onStopTimeout(source: DshProcess) {}
     }
 
     @Volatile private var process: Process? = null
+    /** Guarded by this: the blocking ProcessBuilder call itself runs outside the monitor. */
+    private var spawning = false
+    private var spawnFailed = false
     /**
      * Set instead of [process] by [adopt]: the engine was started by an earlier app process,
      * so there is no child of ours to hold. Liveness then comes from the pid file, and
      * [alive] is the single place that knows both shapes.
      */
     @Volatile private var adoptedPid: Int? = null
+    /** The pid this instance launched or adopted; the root stop signal starts here. */
+    @Volatile private var enginePid: Int? = null
+    /** Whether the last root stop actually confirmed the recorded pid(s) are gone. */
+    @Volatile private var rootStopVerified = true
+    @Volatile private var stopTimeoutReported = false
+    @Volatile private var stopCalls = 0
     @Volatile private var stopping = false
     @Volatile private var expectedExit = false
     @Volatile private var readyReported = false
     @Volatile private var waiter: Thread? = null
     @Volatile private var stopper: Thread? = null
+    @Volatile private var processesReaped = false
+    @Volatile private var mountTargetsComplete = true
+    @Volatile var mountCleanupComplete: Boolean = true
+        private set
+    var mountTargets: List<String> = emptyList()
+        private set
     // Share captured identities across launcher replacement within this app
     // process. Both capture and cleanup use the shared state's monitor.
     private val cleanupState by lazy {
-        RuntimeProcessOwnership.cleanupState(rootfs.canonicalPath, AndroidProcess.myUid())
+        RuntimeProcessOwnership.cleanupState(rootfs.canonicalPath, adoptedUid())
     }
     private val cleanupKnown get() = cleanupState.known
     var port: Int = DEFAULT_PORT
@@ -73,9 +110,12 @@ class DshProcess(
     val launchDiagnostics = LaunchDiagnostics()
     val executionMode: String? get() = launchDiagnostics.currentMode(alive)
 
-    /** A spawned child, or an adopted engine still answering on its port. */
+    /** A spawned child, or an adopted identity retained until root liveness confirms its exit. */
     val alive: Boolean
-        get() = process?.isAlive == true || (adoptedPid != null && canConnect(port))
+        get() = process?.isAlive == true || adoptedPid != null
+
+    /** This engine came from an earlier app process, so its launch command cannot change. */
+    val adoptedEngine: Boolean get() = adoptedPid != null
 
     var directFallbackReason: String? = null
         private set
@@ -91,29 +131,28 @@ class DshProcess(
     fun adopt(record: EngineHandoff.Record) {
         check(process == null && adoptedPid == null) { "already started" }
         adoptedPid = record.pid
+        enginePid = record.pid
         port = record.port
+        mountTargets = record.mountTargets
+        mountTargetsComplete = record.mountTargetsComplete
         root = true
         launchDiagnostics.selected(LaunchDiagnostics.CHROOT, null)
         launchDiagnostics.spawned()
         readyReported = true
         listener.onLog("[dsh-app] adopted the running engine (pid ${record.pid}, port ${record.port})", "system")
         listener.onReady(this, "http://127.0.0.1:${record.port}", record.token)
-        // The engine is gone when its port stops answering, not when /proc loses the pid:
-        // under SELinux this app cannot see the ksu-domain process directory at all, so
-        // a /proc check here would report a live engine as dead on the first tick.
-        // The port is the fact the app actually depends on.
         waiter = thread(name = "dsh-adopt-wait", isDaemon = true) {
-            var missed = 0
-            while (!stopping) {
-                Thread.sleep(1_000)
-                if (stopping) return@thread
-                // Two consecutive failures, so a busy engine is not reported as dead.
-                if (canConnect(record.port)) missed = 0
-                else if (++missed >= 2) break
+            AdoptedEngineMonitor(
+                record, rootfs, adoptedUid(), adoptedLiveness, adoptedConnect, adoptedSleep,
+            ).run()
+            val stopThread = synchronized(this) {
+                adoptedPid = null
+                stopper
             }
-            if (stopping) return@thread
-            synchronized(this) { adoptedPid = null }
-            listener.onExit(this, 0, false)
+            stopThread?.join()
+            if (stopThread == null) processesReaped = processReaper?.invoke() ?: killStrays()
+            cleanupMounts()
+            listener.onExit(this, 0, expectedExit)
         }
     }
 
@@ -132,6 +171,7 @@ class DshProcess(
         // Only PRoot's fake hard links stand in Direct's way: tidy them once no runtime process is left.
         val tidy = !rootSelection.root && selection.fallbackReason == DirectLaunch.INCOMPATIBLE
         val cleanup = reapStrays(allowObservationGap = !selection.direct && !tidy)
+        processesReaped = cleanup.complete
         if (tidy && cleanup.complete) selection = tidyLinks(binds)
         root = rootSelection.root
         directFallbackReason = rootSelection.fallbackReason ?: selection.fallbackReason ?: if (directEngine && safe) "safeRecovery" else null
@@ -226,7 +266,11 @@ class DshProcess(
             // The planner validates the composed argv and turns it into a launcher script.
             // su runs it; the script mounts, chroots and drops to this app's own uid, so
             // every ownership/stop/cleanup path below keeps working unchanged.
-            val plan = RootLaunch.prepare(rootfs, argv, AndroidProcess.myUid(), RootLaunch.supplementaryGroups())
+            val plan = RootLaunch.prepare(rootfs, argv, adoptedUid(), RootLaunch.supplementaryGroups())
+            mountTargets = plan.mountTargets
+            mountTargetsComplete = true
+            mountCleanupComplete = false
+            persistPendingMounts(EngineHandoff.PendingMounts(rootfs.canonicalPath, mountTargets))
             val script = File(context.filesDir, "root-launch.sh")
             script.writeText(plan.script)
             // The root manager's own chatter shares the stream; root commands never print it.
@@ -245,36 +289,73 @@ class DshProcess(
         listener.onLog("[dsh-app] launching ${builder.command().joinToString(" ") { redact(it) }}", "system")
         // stop() came in while this was being prepared: don't launch at all.
         if (stopping) {
-            listener.onExit(this, 0, true)
+            if (root) stop() else listener.onExit(this, 0, true)
             return
         }
         // Chroot exposes the same real paths Direct does, so the agents text follows it too.
         onLaunchMethod?.invoke(direct || root)
-        val p = builder.start()
-        process = p
-        launchDiagnostics.spawned()
-        val out = pump(p.inputStream.bufferedReader(), "stdout")
-        val err = pump(p.errorStream.bufferedReader(), "stderr")
-        waiter = thread(name = "dsh-wait", isDaemon = true) {
-            val code = try { p.waitFor() } catch (_: InterruptedException) { -1 }
-            // The fatal message is usually the last output: let the pumps drain it before reporting.
-            try {
-                out.join(2000)
-                err.join(2000)
-            } catch (_: InterruptedException) {
+        // Mark the spawn attempt before starting it: an app death at any later point must reap.
+        if (root) persistPendingMounts(EngineHandoff.PendingMounts(rootfs.canonicalPath, mountTargets, spawned = true))
+        val maySpawn = synchronized(this) {
+            if (stopping) false else {
+                spawnFailed = false
+                spawning = true
+                true
             }
-            // Report after a running stop() has finished: its killStrays() must not hit the next launch.
-            val stopThread = synchronized(this) {
-                process = null
-                stopper
-            }
-            stopThread?.join()
-            // An unexpected parent exit can leave tracees behind too. Keep the
-            // controller's ownership until this UID sweep has finished.
-            if (stopThread == null) killStrays()
-            listener.onExit(this, code, expectedExit)
         }
-        if (stopping) stop()
+        if (!maySpawn) {
+            if (root) stop() else listener.onExit(this, 0, true)
+            return
+        }
+        val p = try {
+            processStarter(builder)
+        } catch (error: Throwable) {
+            synchronized(this) {
+                spawnFailed = true
+                spawning = false
+                (this as java.lang.Object).notifyAll()
+            }
+            throw error
+        }
+        synchronized(this) {
+            process = p
+        }
+        try {
+            if (root) {
+                persistPendingMounts(EngineHandoff.PendingMounts(
+                    rootfs.canonicalPath, mountTargets, spawned = true, pid = pidHint(),
+                ))
+            }
+            launchDiagnostics.spawned()
+            val out = pump(p.inputStream.bufferedReader(), "stdout")
+            val err = pump(p.errorStream.bufferedReader(), "stderr")
+            waiter = thread(name = "dsh-wait", isDaemon = true) {
+                val code = try { p.waitFor() } catch (_: InterruptedException) { -1 }
+                // The fatal message is usually the last output: let the pumps drain it before reporting.
+                try {
+                    out.join(2000)
+                    err.join(2000)
+                } catch (_: InterruptedException) {
+                }
+                // Report after a running stop() has finished: its killStrays() must not hit the next launch.
+                val stopThread = synchronized(this) {
+                    process = null
+                    stopper
+                }
+                stopThread?.join()
+                // An unexpected parent exit can leave tracees behind too. Keep the
+                // controller's ownership until this UID sweep has finished.
+                if (stopThread == null) processesReaped = processReaper?.invoke() ?: killStrays()
+                cleanupMounts()
+                listener.onExit(this, code, expectedExit)
+            }
+            if (stopping) stop()
+        } finally {
+            synchronized(this) {
+                spawning = false
+                (this as java.lang.Object).notifyAll()
+            }
+        }
     }
 
     /**
@@ -310,17 +391,25 @@ class DshProcess(
     fun awaitExit(millis: Long = 0): Boolean {
         // The waiter joins the stopper before reporting exit. Startup can fail
         // after spawning but before allocating it, so await the stopper then.
-        val ending = waiter ?: stopper
+        val ending = waiter?.takeIf { it.isAlive } ?: stopper
         ending?.join(millis)
-        return ending?.isAlive != true
+        return ending?.isAlive != true && mountCleanupComplete
     }
 
     /** Preserve a startup failure through cleanup and the service's later STOP. */
     @Synchronized fun failStart(message: String) {
-        if (stopping) return
+        if (stopping) {
+            // Stop can arrive after start throws but before this catch path. If it found
+            // neither a waiter nor a stopper, this path owns the one terminal callback.
+            if (waiter == null && stopper == null) cleanupStoppedBeforeSpawn()
+            return
+        }
         startupError = message
         listener.onLog("[dsh-app] start failed: $message", "system")
         stop(expected = false)
+        // A failure before ProcessBuilder.start (or before a child/stopper exists) has
+        // no waiter to perform the root mount cleanup on its behalf.
+        if (waiter == null && stopper == null) cleanupMounts()
     }
 
     /**
@@ -330,50 +419,162 @@ class DshProcess(
     @Synchronized fun stop(expected: Boolean = true) {
         stopping = true
         if (expected) expectedExit = true
-        if (stopper != null) return
+        if (stopper?.isAlive == true) return
+        stopTimeoutReported = false
+        stopCalls += 1
         // An adopted engine has no child of ours: signal its pid file like any other run,
         // and let the adoption waiter report the exit.
         val adopted = adoptedPid
-        if (process == null) {
-            if (adopted == null) return
+        if (adopted == null && spawning) {
             stopper = thread(name = "dsh-stop", isDaemon = true) {
-                try {
-                    val node = guestRecord()
-                    if (node != null) signalOwned(node, OsConstants.SIGTERM)
-                    // The pid file is the only handle; fall back to it if /proc no longer
-                    // matches an owned record (the engine may have re-exec'd). Waiting on the
-                    // port rather than /proc keeps this correct under SELinux.
-                    if (node == null) runCatching { Os.kill(adopted, OsConstants.SIGTERM) }
-                    val deadline = System.nanoTime() + 5_000_000_000L
-                    while (System.nanoTime() < deadline && canConnect(port)) Thread.sleep(100)
-                    if (canConnect(port)) runCatching { Os.kill(adopted, OsConstants.SIGKILL) }
-                } finally {
-                    killStrays()
+                val spawned = awaitSpawn()
+                // After the spawn gate closes a missing waiter can never appear: the stopper
+                // owns that failure's final callback; otherwise the waiter reports the exit.
+                if (spawned != null) {
+                    stopChildAndReportExit(spawned)
+                } else if (spawnFailed) {
+                    if (root && !mountCleanupComplete) cleanupStoppedBeforeSpawn()
+                    else listener.onExit(this, 0, expectedExit)
                 }
             }
+            armStopWatchdog()
+            return
+        }
+        if (process == null) {
+            if (adopted == null) {
+                if (root && !mountCleanupComplete) {
+                    stopper = thread(name = "dsh-stop", isDaemon = true) {
+                        cleanupStoppedBeforeSpawn()
+                    }
+                    armStopWatchdog()
+                }
+                return
+            }
+            stopper = thread(name = "dsh-stop", isDaemon = true) {
+                try {
+                    if (adoptedStop != null) {
+                        adoptedStop.invoke(adopted)
+                    } else if (root) {
+                        // Under root the engine is its own session leader; kill the tree
+                        // instead of relying on /proc, which SELinux can hide from us.
+                        val pids = listOfNotNull(adopted, enginePid).distinct().filter { it > 0 }
+                        val terminated = pids.isNotEmpty() &&
+                            runCatching { rootTerminate(pids) }.getOrDefault(false)
+                        rootStopVerified = pids.isEmpty() || terminated
+                        listener.onLog("[dsh-app] root stop: terminated=$terminated pids=${pids.size}", "system")
+                    } else {
+                        val node = guestRecord()
+                        if (node != null) signalOwned(node, OsConstants.SIGTERM)
+                        // The pid file is the only handle; fall back to it if /proc no longer
+                        // matches an owned record (the engine may have re-exec'd). Waiting on the
+                        // port rather than /proc keeps this correct under SELinux.
+                        if (node == null) runCatching { Os.kill(adopted, OsConstants.SIGTERM) }
+                    }
+                    val deadline = System.nanoTime() + 5_000_000_000L
+                    while (System.nanoTime() < deadline && adoptedConnect(port)) Thread.sleep(100)
+                    if (adoptedConnect(port)) runCatching { Os.kill(adopted, OsConstants.SIGKILL) }
+                } finally {
+                    processesReaped = processReaper?.invoke() ?: killStrays()
+                }
+            }
+            armStopWatchdog()
             return
         }
         val p = process ?: return
-        stopper = thread(name = "dsh-stop", isDaemon = true) {
+        stopper = thread(name = "dsh-stop", isDaemon = true) { stopChildAndReportExit(p) }
+        armStopWatchdog()
+    }
+
+    /** Reports a wedged stop once; the controller turns it into a retryable error. */
+    private fun armStopWatchdog() {
+        val s = stopper ?: return
+        if (stopTimeoutReported) return
+        stopTimeoutReported = true
+        thread(name = "dsh-stop-watchdog", isDaemon = true) {
+            s.join(stopTimeoutMillis)
+            if (s.isAlive) listener.onStopTimeout(this)
+        }
+    }
+
+    private fun awaitSpawn(): Process? = synchronized(this) {
+        while (spawning) (this as java.lang.Object).wait()
+        process
+    }
+
+    private fun cleanupStoppedBeforeSpawn() {
+        if (!processesReaped) processesReaped = processReaper?.invoke() ?: killStrays()
+        cleanupMounts()
+        listener.onExit(this, 0, expectedExit)
+    }
+
+    /** Once allocated the waiter reports exit; otherwise this stopper is the sole owner. */
+    private fun stopChildAndReportExit(p: Process) {
+        stopChild(p)
+        if (waiter == null) listener.onExit(this, 0, expectedExit)
+    }
+
+    private fun stopChild(p: Process) {
+        try {
+            val node = if (p.isAlive) guestRecord() else null
+            // Root has no proot parent to SIGQUIT: the chrooted node is the whole tree,
+            // and the su client is a plain child that closes on stdin EOF.
+            val proot = if (direct || root) null else node?.let { child -> processSnapshot().records.firstOrNull { it.pid == child.parent && it.proot } }
+            if (root) {
+                // SELinux can hide the node from /proc ("observation unavailable"), so do
+                // not depend on guestRecord() here. The engine's own pid is the session
+                // leader (setsid), so a negative-pid kill reaches the node child too.
+                val pids = listOfNotNull(enginePid, pidHint(), adoptedPid).distinct().filter { it > 0 }
+                val terminated = pids.isNotEmpty() &&
+                    runCatching { rootTerminate(pids) }.getOrDefault(false)
+                rootStopVerified = pids.isEmpty() || terminated
+                listener.onLog("[dsh-app] root stop: terminated=$terminated pids=${pids.size}", "system")
+                if (p.isAlive) p.destroy()
+            } else if (node != null) {
+                signalOwned(node, OsConstants.SIGTERM)
+            } else if (direct && p.isAlive) {
+                p.destroy() // loader/preload may fail before writing its pid file
+            }
+            if (!waitExit(p, 5000) && proot != null) signalOwned(proot, OsConstants.SIGQUIT)
+            waitExit(p, 2000)
+        } finally {
             try {
-                val node = if (p.isAlive) guestRecord() else null
-                // Root has no proot parent to SIGQUIT: the chrooted node is the whole tree,
-                // and the su client is a plain child that closes on stdin EOF.
-                val proot = if (direct || root) null else node?.let { child -> processSnapshot().records.firstOrNull { it.pid == child.parent && it.proot } }
-                if (node != null) signalOwned(node, OsConstants.SIGTERM)
-                else if ((direct || root) && p.isAlive) p.destroy() // loader/preload may fail before writing its pid file
-                if (!waitExit(p, 5000) && proot != null) signalOwned(proot, OsConstants.SIGQUIT)
-                waitExit(p, 2000)
+                if (p.isAlive) p.destroyForcibly()
             } finally {
-                try {
-                    if (p.isAlive) p.destroyForcibly()
-                } finally {
-                    // Reap tracees before waiting: an OEM Process.waitFor may not
-                    // return until they exit. The waiter still retains this owner.
-                    killStrays()
-                    p.waitFor()
+                // Reap tracees before waiting: an OEM Process.waitFor may not
+                // return until they exit. The waiter still retains this owner.
+                processesReaped = processReaper?.invoke() ?: killStrays()
+                if (!p.waitFor(2, TimeUnit.SECONDS)) p.destroyForcibly()
+                val waiterAlive = synchronized(this) { waiter?.isAlive == true }
+                if (!waiterAlive) {
+                    cleanupMounts()
+                    // stopChildAndReportExit owns the no-waiter callback; only a retry
+                    // whose old waiter has already finished needs to report here.
+                    if (waiter != null && stopCalls > 1 && mountCleanupComplete) {
+                        listener.onExit(this, 0, expectedExit)
+                    }
                 }
             }
+        }
+    }
+
+    private fun cleanupMounts() {
+        val cleaned = runCatching {
+            !root || (mountTargets.isNotEmpty() && mountCleanup(mountTargets))
+        }.getOrDefault(false)
+        // Never unmount by prefix: this only asks about the targets this instance recorded.
+        val residual = if (root && cleaned) {
+            runCatching { rootResidual(mountTargets) }.getOrDefault(mountTargets)
+        } else {
+            emptyList()
+        }
+        mountCleanupComplete = (!root || (processesReaped && rootStopVerified)) &&
+            mountTargetsComplete && cleaned && residual.isEmpty()
+        if (root && mountCleanupComplete) clearPendingMounts()
+        if (!mountCleanupComplete) {
+            if (residual.isNotEmpty()) {
+                listener.onLog("[dsh-app] this instance's root mounts remain: ${residual.size}; other mounts are left untouched", "system")
+            }
+            listener.onLog("[dsh-app] root mount cleanup incomplete; handoff retained for a safe retry", "system")
         }
     }
 
@@ -402,9 +603,9 @@ class DshProcess(
     }
 
     private fun signalOwned(record: RuntimeProcessRecord, value: Int) = runCatching {
-        val current = RuntimeProcessOwnership.stat(File("/proc/${record.pid}/stat").readText())
-        if (current?.second == record.started && Os.stat("/proc/${record.pid}").st_uid == AndroidProcess.myUid()) {
-            Os.kill(record.pid, value)
+        val current = RuntimeProcessOwnership.stat(processReader.stat(record.pid))
+        if (current?.second == record.started && processReader.uid(record.pid) == adoptedUid()) {
+            processKiller(record.pid, value)
         }
     }
 
@@ -426,6 +627,13 @@ class DshProcess(
         val url = match.value
         val token = TOKEN_PARAM.find(url)?.groupValues?.get(1) ?: return
         readyReported = true
+        if (root) runCatching {
+            // The pid file may name the wrapping sh; keep it for the root stop path.
+            enginePid = pidHint()
+            persistPendingMounts(EngineHandoff.PendingMounts(
+                rootfs.canonicalPath, mountTargets, spawned = true, pid = enginePid ?: -1,
+            ))
+        }
         val base = "http://127.0.0.1:$port"
         thread(name = "dsh-ready", isDaemon = true) {
             val deadline = System.currentTimeMillis() + 90_000
@@ -443,7 +651,7 @@ class DshProcess(
     }
 
     /** Reads only this app's uid. Environment values are used for ownership, never logged. */
-    private val processReader = object : RuntimeProcessReader {
+    private val processReader = runtimeProcessReader ?: object : RuntimeProcessReader {
         override fun pids(): List<Int> = (File("/proc").listFiles() ?: throw IOException("cannot enumerate /proc"))
             .mapNotNull { it.name.toIntOrNull() }
         override fun uid(pid: Int): Int? = try {
@@ -459,7 +667,7 @@ class DshProcess(
     }
 
     private fun processSnapshot(known: Set<Int> = emptySet()): RuntimeProcessSnapshot =
-        RuntimeProcessOwnership.scan(processReader, AndroidProcess.myUid(), AndroidProcess.myPid(), known)
+        RuntimeProcessOwnership.scan(processReader, adoptedUid(), appPid(), known)
 
     private fun pidHint(): Int? = try {
         File(rootfs, "tmp/dsh-web.pid").readText().trim().toIntOrNull()?.takeIf { it > 0 }
@@ -485,9 +693,9 @@ class DshProcess(
     }
 
     private fun reapStraysLocked(allowObservationGap: Boolean): CleanupResult {
-        val myPid = AndroidProcess.myPid()
+        val myPid = appPid()
         val roots = setOf(rootfs.absolutePath, rootfs.canonicalPath)
-        val hinted = pidHint()?.let { setOf(it) }.orEmpty()
+        val hinted = pidHint()?.let { setOf(it) }.orEmpty() + initialCleanupPids
         val deadline = System.nanoTime() + 2_000_000_000L
         var first = true
         while (true) {

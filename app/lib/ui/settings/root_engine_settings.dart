@@ -28,10 +28,11 @@ class _RootEngineSettingsState extends ConsumerState<RootEngineSettings> {
     final stopped = !status.phase.isBusy && status.phase != RuntimePhase.running;
     // Mirrors Direct: the switch is inert while the engine is up, since the
     // execution world is fixed when the process spawns.
-    final enabled = runtime.loaded && stopped && !_saving && (status.rootEngineAvailable || status.rootEngineEnabled);
+    final rootKnown = status.rootEngineSupported || status.rootEngineAvailable || status.rootEngineEnabled;
+    final enabled = runtime.loaded && stopped && !_saving && rootKnown;
     final fallback = status.rootEngineFallbackReason;
     final rootFailed = fallback == 'rootFailed';
-    final hint = !status.rootEngineAvailable
+    final hint = !rootKnown
         ? l10n.phoneRootUnavailableHint
         : rootFailed && !status.rootEngineEnabled
         ? l10n.phoneRootFailedHint

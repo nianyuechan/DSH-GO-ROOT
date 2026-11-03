@@ -15572,6 +15572,18 @@ abstract class L10n {
   /// **'正在停止…'**
   String get phoneEngineStoppingEllipsis;
 
+  /// No description provided for @phoneEngineStopIncomplete.
+  ///
+  /// In zh, this message translates to:
+  /// **'停止未完成，请重试停止'**
+  String get phoneEngineStopIncomplete;
+
+  /// No description provided for @phoneEngineAdoptedPhoneOff.
+  ///
+  /// In zh, this message translates to:
+  /// **'收养的运行引擎不含手机操控；重启引擎后可用。'**
+  String get phoneEngineAdoptedPhoneOff;
+
   /// No description provided for @phoneEngineStoppedNextSafe.
   ///
   /// In zh, this message translates to:
@@ -18235,6 +18247,66 @@ abstract class L10n {
   /// In zh, this message translates to:
   /// **'允许执行无障碍那一项。它会改变本应用能读到的屏幕内容，所以默认关闭。'**
   String get tuningAllowDangerousHint;
+
+  /// No description provided for @tuningPhantomTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'关闭幻影进程杀手'**
+  String get tuningPhantomTitle;
+
+  /// No description provided for @tuningPhantomDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'阻止系统在后台杀掉引擎的 node 子进程。需要重启后仍保持生效。'**
+  String get tuningPhantomDetail;
+
+  /// No description provided for @tuningBatteryExemptTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'电池白名单'**
+  String get tuningBatteryExemptTitle;
+
+  /// No description provided for @tuningBatteryExemptDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'让系统不把 DSH Go 当作可随时回收的后台应用。'**
+  String get tuningBatteryExemptDetail;
+
+  /// No description provided for @tuningStandbyBucketTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'待机桶：活跃'**
+  String get tuningStandbyBucketTitle;
+
+  /// No description provided for @tuningStandbyBucketDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'避免限制型 ROM 把应用降速到受限待机桶。'**
+  String get tuningStandbyBucketDetail;
+
+  /// No description provided for @tuningMiuiPowerKeeperTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'MIUI 省电豁免'**
+  String get tuningMiuiPowerKeeperTitle;
+
+  /// No description provided for @tuningMiuiPowerKeeperDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'小米/红米上单独的非 AOSP 后台限制，按 ROM 探测后写入。'**
+  String get tuningMiuiPowerKeeperDetail;
+
+  /// No description provided for @tuningAccessibilityAutoTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'自动恢复无障碍服务'**
+  String get tuningAccessibilityAutoTitle;
+
+  /// No description provided for @tuningAccessibilityAutoDetail.
+  ///
+  /// In zh, this message translates to:
+  /// **'允许应用在服务被系统关闭后自行恢复。会改变设备的安全姿态，默认不勾选。'**
+  String get tuningAccessibilityAutoDetail;
 
   /// No description provided for @phoneLaunchStartFailed.
   ///

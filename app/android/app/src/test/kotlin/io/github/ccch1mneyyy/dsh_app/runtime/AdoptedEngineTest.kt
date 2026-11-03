@@ -56,10 +56,11 @@ class AdoptedEngineTest {
     }
 
     @Test
-    fun `unreadable proc counts as gone, never as alive`() {
+    fun `unreadable proc retains the handoff instead of proving an exit`() {
         val result = check(liveness = { AdoptedEngine.Liveness.Unknown })
         assertFalse(result.adopted)
-        assertEquals(AdoptedEngine.GONE, result.reason)
+        assertEquals(AdoptedEngine.UNREACHABLE, result.reason)
+        assertEquals(record, result.record)
     }
 
     @Test
@@ -92,6 +93,45 @@ class AdoptedEngineTest {
         val result = check(health = healthy(ok = false))
         assertFalse(result.adopted)
         assertEquals(AdoptedEngine.UNREACHABLE, result.reason)
+    }
+
+    @Test
+    fun `an unreachable live engine retains its identity to block a duplicate start`() {
+        val result = check(health = healthy(ok = false))
+        assertEquals(record, result.record)
+    }
+
+    @Test
+    fun `adopted monitor waits through TCP failures until the engine identity disappears`() {
+        val connections = ArrayDeque(listOf(false, false, false, false))
+        val sightings = ArrayDeque<AdoptedEngine.Liveness>(listOf(alive(), alive(), AdoptedEngine.Liveness.Absent))
+        val sleeps = mutableListOf<Long>()
+
+        AdoptedEngineMonitor(
+            record = record,
+            rootfs = rootfs,
+            myUid = uid,
+            liveness = { sightings.removeFirst() },
+            connect = { connections.removeFirst() },
+            sleep = { sleeps += it },
+        ).run()
+
+        assertTrue("every disconnect was checked", connections.isEmpty())
+        assertTrue("the monitor returned only for the final absent pid", sightings.isEmpty())
+        assertEquals(listOf(1_000L, 1_000L, 2_000L, 2_000L), sleeps)
+    }
+
+    @Test
+    fun `a live handoff blocks every fresh start even when this launch cannot adopt it`() {
+        assertEquals(
+            AdoptionAction.BLOCK,
+            adoptionAction(check(health = healthy(ok = false)), allowAdopt = true),
+        )
+        assertEquals(AdoptionAction.BLOCK, adoptionAction(check(), allowAdopt = false))
+        assertEquals(
+            AdoptionAction.START_FRESH,
+            adoptionAction(check(liveness = { AdoptedEngine.Liveness.Absent }), allowAdopt = false),
+        )
     }
 
     @Test

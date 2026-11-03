@@ -8475,6 +8475,12 @@ class L10nZh extends L10n {
   String get phoneEngineStoppingEllipsis => '正在停止…';
 
   @override
+  String get phoneEngineStopIncomplete => '停止未完成，请重试停止';
+
+  @override
+  String get phoneEngineAdoptedPhoneOff => '收养的运行引擎不含手机操控；重启引擎后可用。';
+
+  @override
   String get phoneEngineStoppedNextSafe => '已停止 · 下次以安全模式启动';
 
   @override
@@ -9882,6 +9888,36 @@ class L10nZh extends L10n {
 
   @override
   String get tuningAllowDangerousHint => '允许执行无障碍那一项。它会改变本应用能读到的屏幕内容，所以默认关闭。';
+
+  @override
+  String get tuningPhantomTitle => '关闭幻影进程杀手';
+
+  @override
+  String get tuningPhantomDetail => '阻止系统在后台杀掉引擎的 node 子进程。需要重启后仍保持生效。';
+
+  @override
+  String get tuningBatteryExemptTitle => '电池白名单';
+
+  @override
+  String get tuningBatteryExemptDetail => '让系统不把 DSH Go 当作可随时回收的后台应用。';
+
+  @override
+  String get tuningStandbyBucketTitle => '待机桶：活跃';
+
+  @override
+  String get tuningStandbyBucketDetail => '避免限制型 ROM 把应用降速到受限待机桶。';
+
+  @override
+  String get tuningMiuiPowerKeeperTitle => 'MIUI 省电豁免';
+
+  @override
+  String get tuningMiuiPowerKeeperDetail => '小米/红米上单独的非 AOSP 后台限制，按 ROM 探测后写入。';
+
+  @override
+  String get tuningAccessibilityAutoTitle => '自动恢复无障碍服务';
+
+  @override
+  String get tuningAccessibilityAutoDetail => '允许应用在服务被系统关闭后自行恢复。会改变设备的安全姿态，默认不勾选。';
 
   @override
   String get phoneLaunchStartFailed => '未能完成启动';

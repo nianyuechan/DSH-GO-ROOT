@@ -182,6 +182,7 @@ void main() {
     test('runtime errors read as sentences', () {
       expect(humanizeRuntimeError('install failed: 存储空间不足：需要约 640 MB，当前可用 212 MB'), '存储空间不足：需要约 640 MB，当前可用 212 MB');
       expect(humanizeRuntimeError('DSH exited unexpectedly (code 137)'), '引擎意外退出了');
+      expect(humanizeRuntimeError('stop cleanup incomplete: retry the stop'), '停止未完成，请重试停止');
       expect(humanizeRuntimeError(null), isNull);
       expect(humanizeRuntimeError('install failed: raw native exception'), isNull);
       expect(humanizeRuntimeError('start failed: token=secret'), isNull);

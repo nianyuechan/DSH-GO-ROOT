@@ -95,6 +95,37 @@ class SystemTuningTest {
     }
 
     @Test
+    fun `standby write targets user 0 and succeeds only when the readback agrees`() {
+        var reads = 0
+        val shell = FakeShell()
+        val result = SystemTuning.apply(
+            TuningCatalog.standbyBucket,
+            shell,
+            observe = { if (reads++ == 0) "5" else "10" },
+        )
+        assertTrue(result.applied)
+        assertEquals("10", result.observed)
+        val written = shell.commands.single { it.startsWith("run:") }.removePrefix("run:")
+        assertEquals(TuningCatalog.standbyBucket.apply, written)
+        assertTrue(written.contains("--user 0"))
+        assertTrue("the readback must use the same user", shell.commands.filter { it.startsWith("read:") }.all { it.contains("--user 0") })
+    }
+
+    @Test
+    fun `standby readback that still shows the old bucket is not observed`() {
+        var reads = 0
+        val shell = FakeShell()
+        val result = SystemTuning.apply(
+            TuningCatalog.standbyBucket,
+            shell,
+            observe = { if (reads++ == 0) "5" else "5" },
+        )
+        assertFalse("a ROM that ignores the write must not look tuned", result.applied)
+        assertEquals("notObserved", result.reason)
+        assertEquals("5", result.observed)
+    }
+
+    @Test
     fun `dangerous actions need an explicit opt-in`() {
         val shell = FakeShell()
         val skipped = SystemTuning.applyAll(allowDangerous = false, shell = shell) { "0\n2147483647" }
@@ -103,6 +134,44 @@ class SystemTuningTest {
         val included = SystemTuning.applyAll(allowDangerous = true, shell = shell) { "0\n2147483647" }
         // It still has no one-liner apply, so it is never run by applyAll even when allowed.
         assertFalse(included.any { it.id == TuningCatalog.accessibilityAutoGrant.id })
+    }
+
+    @Test
+    fun `applyAll leaves empty accessibility settings to the dedicated flow`() {
+        for (empty in listOf("null", "", " \n\t")) {
+            val shell = FakeShell()
+            val results = SystemTuning.applyAll(allowDangerous = true, shell = shell) { action ->
+                if (action.id == TuningCatalog.accessibilityAutoGrant.id) empty else "0\n2147483647"
+            }
+            assertFalse(results.any { it.id == TuningCatalog.accessibilityAutoGrant.id })
+            assertTrue(shell.commands.none { it.startsWith("run:") && it.contains("enabled_accessibility_services") })
+        }
+    }
+
+    @Test
+    fun `applyAll skips unsupported settings but still reports failed reads`() {
+        val shell = FakeShell(readFails = setOf("phantom"))
+        val results = SystemTuning.applyAll(shell = shell)
+        assertFalse(results.any { it.id == TuningCatalog.miuiPowerKeeper.id })
+        assertEquals("readFailed", results.single { it.id == TuningCatalog.phantom.id }.reason)
+        assertTrue(shell.commands.none { it.startsWith("run:") && it.contains("power_saver_app_manager") })
+    }
+
+    @Test
+    fun `applyAll skips blank standalone settings without hiding compound or failed reads`() {
+        for (blank in listOf("", " \n\t")) {
+            val shell = FakeShell()
+            val results = SystemTuning.applyAll(shell = shell) { action ->
+                when (action.id) {
+                    TuningCatalog.miuiPowerKeeper.id, TuningCatalog.phantom.id -> blank
+                    else -> null
+                }
+            }
+            assertFalse(results.any { it.id == TuningCatalog.miuiPowerKeeper.id })
+            assertEquals("notObserved", results.single { it.id == TuningCatalog.phantom.id }.reason)
+            assertEquals("readFailed", results.single { it.id == TuningCatalog.batteryExempt.id }.reason)
+            assertTrue(shell.commands.none { it.startsWith("run:") && it.contains("power_saver_app_manager") })
+        }
     }
 
     @Test
@@ -166,15 +235,18 @@ class SystemTuningTest {
 
     @Test
     fun `an empty accessibility list is written without a leading separator`() {
-        var written: String? = null
-        val shell = object : SystemTuning.Shell {
-            override fun read(command: String): String? = written ?: "null"
-            override fun run(command: String): Boolean {
-                written = "io.github.ccch1mneyyy.dsh_app/.PhoneA11yService"
-                return true
+        for (empty in listOf("null", "", " \n\t")) {
+            var written: String? = null
+            val shell = object : SystemTuning.Shell {
+                override fun read(command: String): String? = written ?: empty
+                override fun run(command: String): Boolean {
+                    written = "io.github.ccch1mneyyy.dsh_app/.PhoneA11yService"
+                    return true
+                }
             }
+            val result = SystemTuning.applyAccessibility("io.github.ccch1mneyyy.dsh_app/.PhoneA11yService", shell)
+            assertTrue(result.applied)
+            assertEquals("io.github.ccch1mneyyy.dsh_app/.PhoneA11yService", written)
         }
-        SystemTuning.applyAccessibility("io.github.ccch1mneyyy.dsh_app/.PhoneA11yService", shell)
-        assertEquals("io.github.ccch1mneyyy.dsh_app/.PhoneA11yService", written)
     }
 }

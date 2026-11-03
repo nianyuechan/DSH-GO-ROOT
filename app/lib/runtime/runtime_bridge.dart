@@ -167,6 +167,7 @@ class RuntimeStatus {
     this.directEngineActive = false,
     this.directEngineFallbackReason,
     this.rootEngineEnabled = false,
+    this.rootEngineSupported = false,
     this.rootEngineAvailable = false,
     this.rootEngineActive = false,
     this.rootEngineFallbackReason,
@@ -175,6 +176,7 @@ class RuntimeStatus {
     this.launchSpawned = false,
     this.launchFailureReason,
     this.tidyingFiles = false,
+    this.phoneAdoptedNotice = false,
   });
 
   const RuntimeStatus.unknown() : this(phase: RuntimePhase.notInstalled);
@@ -231,6 +233,7 @@ class RuntimeStatus {
   /// Root-chroot launch (see `RootLaunch.kt`). Available only with su plus a rootfs
   /// that carries the chroot tools; it outranks Direct when both could apply.
   final bool rootEngineEnabled;
+  final bool rootEngineSupported;
   final bool rootEngineAvailable;
   final bool rootEngineActive;
   final String? rootEngineFallbackReason;
@@ -247,12 +250,17 @@ class RuntimeStatus {
   /// files for more than a moment (once per install, before Direct launch).
   final bool tidyingFiles;
 
+  /// The engine was adopted from an earlier app process and phone control was requested,
+  /// but an already-running launch command cannot gain the overlay; a restart is needed.
+  final bool phoneAdoptedNotice;
+
   Map<String, Object?> get launchDiagnostics => {
     'directEngineEnabled': directEngineEnabled,
     'directEngineAvailable': directEngineAvailable,
     'directEngineActive': directEngineActive,
     'directEngineFallbackReason': directEngineFallbackReason,
     'rootEngineEnabled': rootEngineEnabled,
+    'rootEngineSupported': rootEngineSupported,
     'rootEngineAvailable': rootEngineAvailable,
     'rootEngineActive': rootEngineActive,
     'rootEngineFallbackReason': rootEngineFallbackReason,
@@ -309,6 +317,7 @@ class RuntimeStatus {
     directEngineActive: map['directEngineActive'] == true,
     directEngineFallbackReason: map['directEngineFallbackReason'] as String?,
     rootEngineEnabled: map['rootEngineEnabled'] == true,
+    rootEngineSupported: map['rootEngineSupported'] == true,
     rootEngineAvailable: map['rootEngineAvailable'] == true,
     rootEngineActive: map['rootEngineActive'] == true,
     rootEngineFallbackReason: map['rootEngineFallbackReason'] as String?,
@@ -317,6 +326,7 @@ class RuntimeStatus {
     launchSpawned: map['launchSpawned'] == true,
     launchFailureReason: map['launchFailureReason'] as String?,
     tidyingFiles: map['tidyingFiles'] == true,
+    phoneAdoptedNotice: map['phoneAdoptedNotice'] == true,
   );
 }
 

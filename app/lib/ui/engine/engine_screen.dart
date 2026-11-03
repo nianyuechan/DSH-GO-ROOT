@@ -118,6 +118,14 @@ class EngineScreen extends ConsumerWidget {
                 child: EngineActions(phase: status.phase),
               ),
             const EngineFailureCard(padding: EdgeInsets.fromLTRB(16, 0, 16, 16)),
+            if (status.phoneAdoptedNotice)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: Text(
+                  l10n.phoneEngineAdoptedPhoneOff,
+                  style: TextStyle(color: colors.warning),
+                ),
+              ),
             const SafeModeCard(padding: EdgeInsets.fromLTRB(16, 0, 16, 16)),
             SettingsSection(
               title: l10n.hubEngineStartup,

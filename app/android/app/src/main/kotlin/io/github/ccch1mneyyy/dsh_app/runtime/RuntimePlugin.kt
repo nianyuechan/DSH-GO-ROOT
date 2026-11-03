@@ -41,20 +41,21 @@ class RuntimePlugin :
         Thread(task, "dsh-runtime-io").apply { isDaemon = true }
     }
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
+    internal var postMain: (() -> Unit) -> Unit = { action -> main.post { action() } }
 
     /** Runs [block] off the platform thread and answers on it. */
-    private fun async(result: MethodChannel.Result, block: () -> Any?) {
+    private fun async(result: MethodChannel.Result, errorCode: String = "runtime_failed", block: () -> Any?) {
         worker.execute {
             val value = try {
                 Result.success(block())
             } catch (e: Throwable) {
                 Result.failure(e)
             }
-            main.post {
+            postMain {
                 value.fold(
                     onSuccess = { result.success(it) },
                     onFailure = {
-                        result.error("runtime_failed", it.message ?: it.javaClass.simpleName, null)
+                        result.error(errorCode, it.message ?: it.javaClass.simpleName, null)
                     },
                 )
             }
@@ -174,13 +175,9 @@ class RuntimePlugin :
                     result.error("launch_method_unavailable", error.message, null)
                 }
             }
-            "setRootEngine" -> {
-                try {
-                    controller.setRootEngine(call.argument<Boolean>("enabled") == true)
-                    result.success(null)
-                } catch (error: IllegalStateException) {
-                    result.error("launch_method_unavailable", error.message, null)
-                }
+            "setRootEngine" -> async(result, "launch_method_unavailable") {
+                controller.setRootEngine(call.argument<Boolean>("enabled") == true)
+                null
             }
             // Tuning runs su, so it goes off the platform thread; the result is the list of
             // outcomes, including the ones that did not end applied.

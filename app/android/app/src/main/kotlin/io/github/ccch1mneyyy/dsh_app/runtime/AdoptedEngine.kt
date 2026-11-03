@@ -34,7 +34,7 @@ object AdoptedEngine {
         data class Alive(val uid: Int, val command: String, val cwd: String?) : Liveness
         /** /proc/<pid> is absent: the process is gone, not unobservable. */
         object Absent : Liveness
-        /** The pid directory exists but could not be read; never treated as alive. */
+        /** The pid directory exists but could not be read; neither alive nor gone is proven. */
         object Unknown : Liveness
     }
 
@@ -107,7 +107,7 @@ object AdoptedEngine {
         if (record.rootfs != root) return Result(false, ROOT_CHANGED)
         when (val seen = liveness(record.pid)) {
             Liveness.Absent -> return Result(false, GONE)
-            Liveness.Unknown -> return Result(false, GONE)
+            Liveness.Unknown -> return Result(false, UNREACHABLE, record)
             is Liveness.Alive -> {
                 if (seen.uid != myUid) return Result(false, NOT_OURS)
                 if (!seen.command.contains(ENGINE_COMMAND)) return Result(false, NOT_THE_ENGINE)
@@ -116,6 +116,47 @@ object AdoptedEngine {
             }
         }
         return if (health.healthy(record.port, record.token)) Result(true, null, record)
-        else Result(false, UNREACHABLE)
+        else Result(false, UNREACHABLE, record)
+    }
+}
+
+internal enum class AdoptionAction { ADOPT, START_FRESH, BLOCK }
+
+/** A retained identity always wins over a fresh launch, even for a different launch mode. */
+internal fun adoptionAction(result: AdoptedEngine.Result, allowAdopt: Boolean): AdoptionAction = when {
+    result.adopted && allowAdopt -> AdoptionAction.ADOPT
+    result.record != null -> AdoptionAction.BLOCK
+    else -> AdoptionAction.START_FRESH
+}
+
+/** TCP monitoring for an adopted engine, with process identity as the exit arbiter. */
+internal class AdoptedEngineMonitor(
+    private val record: EngineHandoff.Record,
+    private val rootfs: File,
+    private val myUid: Int,
+    private val liveness: (Int) -> AdoptedEngine.Liveness,
+    private val connect: (Int) -> Boolean,
+    private val sleep: (Long) -> Unit,
+) {
+    fun run() {
+        var missed = 0
+        while (true) {
+            val backoff = (1_000L * (1L shl (missed / 2).coerceAtMost(2)))
+            sleep(backoff)
+            if (connect(record.port)) {
+                missed = 0
+                continue
+            }
+            missed += 1
+            if (missed < 2) continue
+            val checked = AdoptedEngine.check(
+                record, rootfs, myUid, liveness,
+                AdoptedEngine.HealthCheck { _, _ -> false },
+            )
+            // A live, matching engine is only temporarily unreachable. In particular,
+            // stopping must keep waiting here until the process has actually gone away.
+            if (checked.record != null) continue
+            return
+        }
     }
 }

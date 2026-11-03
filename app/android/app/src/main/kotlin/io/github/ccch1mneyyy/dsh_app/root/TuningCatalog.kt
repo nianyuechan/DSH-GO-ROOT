@@ -77,8 +77,10 @@ object TuningCatalog {
         detail = "避免限制型 ROM 把应用降速到受限待机桶。",
         persistent = false,
         dangerous = false,
-        read = "am get-standby-bucket io.github.ccch1mneyyy.dsh_app",
-        apply = "am set-standby-bucket io.github.ccch1mneyyy.dsh_app active",
+        // HyperOS routes `am` per user; without --user 0 the write can be ignored while
+        // the readback still shows the old bucket (5). Read and write use the same user.
+        read = "am get-standby-bucket --user 0 io.github.ccch1mneyyy.dsh_app",
+        apply = "am set-standby-bucket --user 0 io.github.ccch1mneyyy.dsh_app active",
         isApplied = { output -> output.lines().any { it.trim().toIntOrNull() == 10 } },
     )
 
@@ -126,7 +128,14 @@ object TuningCatalog {
      * output, and an action whose read fails outright is dropped rather than shown broken.
      */
     fun offered(probe: (String) -> String?): List<Action> =
-        all.filter { action -> probe(action.read) != null }
+        all.filter { action -> isSupported(action, probe(action.read)) }
+
+    /** A missing standalone setting is unsupported, except an empty accessibility service list. */
+    fun isSupported(action: Action, output: String?): Boolean = output != null && (
+        action.id == accessibilityAutoGrant.id || !(
+            action.read.startsWith("settings get ") && ';' !in action.read && (output.isBlank() || output.trim() == "null")
+        )
+    )
 
     /**
      * Whether [action] is already applied, from this run's probe. Null means "could not tell",

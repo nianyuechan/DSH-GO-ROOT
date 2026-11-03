@@ -84,6 +84,7 @@ String? humanizeRuntimeError(String? raw) {
   if (text.startsWith('DSH exited unexpectedly')) {
     return appL10n.phoneEngineExited;
   }
+  if (text.startsWith('stop cleanup incomplete')) return appL10n.phoneEngineStopIncomplete;
   if (text == 'runtime not installed') return appL10n.phoneEngineRuntimeMissing;
   if (text.startsWith('safe mode:')) return appL10n.phoneEngineSafeUnsupported;
   if (text.startsWith('manifest:')) return appL10n.phoneEngineRuntimeIncomplete;

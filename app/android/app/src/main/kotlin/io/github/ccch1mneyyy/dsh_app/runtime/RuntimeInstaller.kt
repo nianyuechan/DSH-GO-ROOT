@@ -31,6 +31,7 @@ class RuntimeInstaller(
     private val manifest: RuntimeManifest,
     private val onLog: (String) -> Unit,
     private val sync: () -> Unit = ::syncFilesystems,
+    private val beforeReset: () -> Unit = {},
 ) {
     val baseDir = File(context.filesDir, "runtime")
     val rootfs = File(baseDir, "rootfs")
@@ -122,7 +123,7 @@ class RuntimeInstaller(
 
     /** Deletes the runtime; [keep] (paths under the rootfs) waits in runtime-keep for the next install. */
     fun reset(keep: List<String>) {
-        retireRuntime(baseDir, retiredDir, keepDir, keep)
+        retireRuntime(baseDir, retiredDir, keepDir, keep, beforeRetire = beforeReset)
     }
 
     private fun assetLength(path: String): Long = try {
@@ -168,6 +169,7 @@ internal fun activateRootfs(
     dropKept: Boolean = false,
     sync: () -> Unit,
     syncDirectory: (File) -> Unit = ::syncDirectory,
+    move: (File, File) -> Boolean = { from, to -> from.renameTo(to) },
 ) {
     val rootfs = File(base, "rootfs")
     val staging = File(base, "staging")
@@ -180,20 +182,20 @@ internal fun activateRootfs(
     // /opt is replaced below. Remember old direct use with the carried home so
     // saved physical cwd paths remain readable after upgrading in PRoot mode.
     DirectLaunch.preservePhysicalAlias(rootfs, if (carry.exists()) carry else home, retired)
-    if (!carry.exists() && home.isDirectory && !home.renameTo(carry)) {
+    if (!carry.exists() && home.isDirectory && !move(home, carry)) {
         throw IllegalStateException("could not keep the user's home")
     }
     retired.deleteRecursivelySafely()
-    if (rootfs.exists() && !rootfs.renameTo(retired)) rootfs.deleteRecursivelySafely()
-    if (!staging.renameTo(rootfs)) throw IllegalStateException("could not activate rootfs")
+    if (rootfs.exists() && !move(rootfs, retired)) rootfs.deleteRecursivelySafely()
+    if (!move(staging, rootfs)) throw IllegalStateException("could not activate rootfs")
     if (carry.exists()) {
         home.deleteRecursivelySafely()
-        if (!carry.renameTo(home)) throw IllegalStateException("could not restore the user's home")
+        if (!move(carry, home)) throw IllegalStateException("could not restore the user's home")
     }
     listOf("root", "root/workspace", "tmp", "dev", "proc", "sys").forEach { File(rootfs, it).mkdirs() }
     File(rootfs, "tmp").setWritable(true, false)
     // Before the version: until everything kept is back, the runtime reads as not installed.
-    if (keep != null) restoreKept(keep, rootfs, dropKept)
+    if (keep != null) restoreKept(keep, rootfs, dropKept, move = move)
     // Everything the marker vouches for is on disk before it says ready. A marker torn by a
     // power cut doesn't match the version, so the next start just installs again.
     sync()
@@ -236,8 +238,16 @@ class KeepFailed(rel: String) : IllegalStateException("keep: could not move $rel
  * killed at any point is finished by the next one or by the next install ([settleReset]). Nothing is
  * deleted before what is kept has moved.
  */
-internal fun retireRuntime(base: File, retired: File, keep: File, paths: List<String>) {
-    settleReset(retired, keep)
+internal fun retireRuntime(
+    base: File,
+    retired: File,
+    keep: File,
+    paths: List<String>,
+    beforeRetire: () -> Unit = {},
+    move: (File, File) -> Boolean = { from, to -> from.renameTo(to) },
+) {
+    beforeRetire()
+    settleReset(retired, keep, move = move)
     if (!base.exists()) {
         // Nothing to take from; the choice still applies to what an earlier reset kept.
         pruneKept(keep, paths)
@@ -245,11 +255,11 @@ internal fun retireRuntime(base: File, retired: File, keep: File, paths: List<St
     }
     val list = File(base, KEEP_LIST)
     list.writeText(paths.joinToString("\n"))
-    if (!base.renameTo(retired)) {
+    if (!move(base, retired)) {
         list.delete()
         throw IllegalStateException("could not retire the runtime")
     }
-    settleReset(retired, keep)
+    settleReset(retired, keep, move = move)
 }
 
 /**
@@ -259,7 +269,12 @@ internal fun retireRuntime(base: File, retired: File, keep: File, paths: List<St
  * runtime stays as it is and the next attempt picks up from there; with [dropFailed] it is deleted
  * with whatever could not move.
  */
-internal fun settleReset(retired: File, keep: File, dropFailed: Boolean = false) {
+internal fun settleReset(
+    retired: File,
+    keep: File,
+    dropFailed: Boolean = false,
+    move: (File, File) -> Boolean = { from, to -> from.renameTo(to) },
+) {
     if (!retired.present()) return
     val list = File(retired, KEEP_LIST)
     val listed = readKeepList(list)
@@ -269,7 +284,7 @@ internal fun settleReset(retired: File, keep: File, dropFailed: Boolean = false)
         val to = File(keep, rel)
         if (!from.present() || to.present()) continue
         to.parentFile?.mkdirs()
-        if (!from.renameTo(to) && !dropFailed) throw KeepFailed(rel)
+        if (!move(from, to) && !dropFailed) throw KeepFailed(rel)
     }
     // An unreadable list keeps whatever is already kept.
     if (listed != null) pruneKept(keep, listed)
@@ -297,7 +312,12 @@ private fun pruneKept(keep: File, paths: List<String>) {
  * [KeepFailed]; what is not back yet stays in [keep] for the next install. With [dropFailed] the
  * paths that cannot move are given up instead and [keep] is cleared.
  */
-internal fun restoreKept(keep: File, rootfs: File, dropFailed: Boolean = false) {
+internal fun restoreKept(
+    keep: File,
+    rootfs: File,
+    dropFailed: Boolean = false,
+    move: (File, File) -> Boolean = { from, to -> from.renameTo(to) },
+) {
     val dropped = File(keep.parentFile, "${keep.name}.dropped")
     dropped.deleteRecursivelySafely()
     if (!keep.present()) return
@@ -310,14 +330,14 @@ internal fun restoreKept(keep: File, rootfs: File, dropFailed: Boolean = false) 
         val aside = File(trash, rel)
         if (target.present()) {
             aside.parentFile?.mkdirs()
-            if (!target.renameTo(aside)) {
+            if (!move(target, aside)) {
                 if (dropFailed) continue
                 throw KeepFailed(rel)
             }
         }
         target.parentFile?.mkdirs()
-        if (!kept.renameTo(target)) {
-            if (aside.present()) aside.renameTo(target)
+        if (!move(kept, target)) {
+            if (aside.present()) move(aside, target)
             if (dropFailed) continue
             throw KeepFailed(rel)
         }
@@ -328,7 +348,7 @@ internal fun restoreKept(keep: File, rootfs: File, dropFailed: Boolean = false) 
         return
     }
     // Out of the restore's way in one step, then deleted; a delete cut short is retried next time.
-    if (keep.renameTo(dropped)) dropped.deleteRecursivelySafely() else keep.deleteRecursivelySafely()
+    if (move(keep, dropped)) dropped.deleteRecursivelySafely() else keep.deleteRecursivelySafely()
 }
 
 /** Removes the empty directories of this tree, itself included; files (and symlinks) stay. */

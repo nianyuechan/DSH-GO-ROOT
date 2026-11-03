@@ -49,8 +49,15 @@ class _EngineTuningSettingsState extends ConsumerState<EngineTuningSettings> {
     if (_running) return;
     setState(() => _running = true);
     try {
-      final results = await ref.read(runtimeBridgeProvider).applyTuning(allowDangerous: _allowDangerous);
-      final failed = results.where((r) => !r.applied).length;
+      final bridge = ref.read(runtimeBridgeProvider);
+      final results = await bridge.applyTuning(allowDangerous: _allowDangerous);
+      var failed = results.where((r) => !r.applied).length;
+      if (_allowDangerous && (_items ?? const []).any((i) => i.id == 'accessibilityAuto' && !i.applied)) {
+        final result = await bridge.applyAccessibilityTuning(
+          'io.github.ccch1mneyyy.dsh_app/.phone.a11y.PhoneA11yService',
+        );
+        if (result?.applied != true) failed++;
+      }
       if (mounted) {
         showBriefNotice(
           context,
@@ -73,7 +80,7 @@ class _EngineTuningSettingsState extends ConsumerState<EngineTuningSettings> {
       // Nothing to offer on this ROM: showing an empty card is worse than showing none.
       return const SizedBox.shrink();
     }
-    final pending = items.where((i) => !i.applied && !i.dangerous).length;
+    final pending = items.where((i) => !i.applied && (!i.dangerous || _allowDangerous)).length;
     return SettingsSection(
       title: l10n.tuningTitle,
       children: [
@@ -97,9 +104,17 @@ class _EngineTuningSettingsState extends ConsumerState<EngineTuningSettings> {
   Widget _row(TuningItem item, L10n l10n) {
     final state = item.applied ? l10n.tuningStateApplied : l10n.tuningStatePending;
     final persistence = item.persistent ? null : l10n.tuningNotPersistent;
+    final (title, detail) = switch (item.id) {
+      'phantom' => (l10n.tuningPhantomTitle, l10n.tuningPhantomDetail),
+      'batteryExempt' => (l10n.tuningBatteryExemptTitle, l10n.tuningBatteryExemptDetail),
+      'standbyBucket' => (l10n.tuningStandbyBucketTitle, l10n.tuningStandbyBucketDetail),
+      'miuiPowerKeeper' => (l10n.tuningMiuiPowerKeeperTitle, l10n.tuningMiuiPowerKeeperDetail),
+      'accessibilityAuto' => (l10n.tuningAccessibilityAutoTitle, l10n.tuningAccessibilityAutoDetail),
+      _ => (item.title, item.detail),
+    };
     return SettingsTile(
-      title: item.title,
-      subtitle: [item.detail, persistence].whereType<String>().join('\n'),
+      title: title,
+      subtitle: [detail, persistence].whereType<String>().join('\n'),
       trailing: Text(
         state,
         style: Theme.of(context).textTheme.labelMedium?.copyWith(

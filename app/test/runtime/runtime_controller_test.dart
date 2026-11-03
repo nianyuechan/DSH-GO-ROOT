@@ -74,4 +74,20 @@ void main() {
     await flush();
     expect(container.read(localRuntimeProvider).loaded, isTrue);
   });
+
+  test('root tool support survives the status map and legacy defaults', () {
+    final status = RuntimeStatus.fromMap({'phase': 'installed', 'rootEngineSupported': true});
+    expect(status.rootEngineSupported, isTrue);
+    expect(status.launchDiagnostics['rootEngineSupported'], isTrue);
+    final legacy = RuntimeStatus.fromMap({'phase': 'installed'});
+    expect(legacy.rootEngineSupported, isFalse);
+    expect(legacy.launchDiagnostics['rootEngineSupported'], isFalse);
+  });
+
+  test('adopted phone notice survives the status map and legacy defaults', () {
+    final status = RuntimeStatus.fromMap({'phase': 'running', 'phoneAdoptedNotice': true});
+    expect(status.phoneAdoptedNotice, isTrue);
+    final legacy = RuntimeStatus.fromMap({'phase': 'running'});
+    expect(legacy.phoneAdoptedNotice, isFalse);
+  });
 }

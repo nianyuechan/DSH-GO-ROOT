@@ -1,16 +1,45 @@
 package io.github.ccch1mneyyy.dsh_app.runtime
 
+import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
+import org.junit.Before
 import org.junit.Test
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.InputStream
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 
 class RootLaunchTest {
     private val rootfs = File("/data/user/0/io.github.ccch1mneyyy.dsh_app/files/runtime/rootfs")
+    private val originalAbsolutePath = DirectLaunch.absolutePath
+    private val originalCanonicalRoot = RootLaunch.canonicalRoot
+    private val originalCleanupStarter = RootLaunch.cleanupStarter
+    private val originalTerminateStarter = RootLaunch.terminateStarter
+    private val originalResidualStarter = RootLaunch.residualStarter
+
+    @Before
+    fun usePosixPaths() {
+        DirectLaunch.absolutePath = { it.startsWith('/') }
+        RootLaunch.canonicalRoot = { it }
+    }
+
+    @After
+    fun restorePathSemantics() {
+        DirectLaunch.absolutePath = originalAbsolutePath
+        RootLaunch.canonicalRoot = originalCanonicalRoot
+        RootLaunch.cleanupStarter = originalCleanupStarter
+        RootLaunch.terminateStarter = originalTerminateStarter
+        RootLaunch.residualStarter = originalResidualStarter
+    }
 
     private fun composedArgv(vararg binds: Pair<String, String>): List<String> = buildList {
         add("${rootfs.path}-native/proot")
@@ -27,6 +56,54 @@ class RootLaunchTest {
     }
 
     private val gids = intArrayOf(3003, 3002, 1015, 1023)
+
+    private class BlockingCleanupProcess(
+        private val blockRead: Boolean = false,
+        private val blockWait: Boolean = false,
+    ) : Process() {
+        val destroyed = CountDownLatch(1)
+        @Volatile var destroyCalls = 0
+
+        override fun getInputStream(): InputStream = object : InputStream() {
+            override fun read(): Int {
+                if (blockRead) destroyed.await()
+                return -1
+            }
+        }
+
+        override fun getErrorStream(): InputStream = ByteArrayInputStream(ByteArray(0))
+        override fun getOutputStream() = ByteArrayOutputStream()
+
+        override fun waitFor(): Int {
+            if (blockWait) destroyed.await()
+            return 0
+        }
+
+        override fun exitValue(): Int = 0
+
+        override fun destroy() {
+            destroyCalls += 1
+            destroyed.countDown()
+        }
+    }
+
+    private fun assertHungCleanupFails(process: BlockingCleanupProcess) {
+        RootLaunch.cleanupStarter = { process }
+        val finished = CountDownLatch(1)
+        var result: Boolean? = null
+        val worker = thread(isDaemon = true, name = "root-cleanup-test") {
+            result = RootLaunch.cleanup(listOf("/data/root/proc"))
+            finished.countDown()
+        }
+        try {
+            assertTrue("cleanup must have a bounded watchdog", finished.await(20, TimeUnit.SECONDS))
+            assertFalse(result!!)
+            assertTrue("a timed-out su process must be destroyed", process.destroyCalls > 0)
+        } finally {
+            process.destroy()
+            worker.join(2000)
+        }
+    }
 
     @Test
     fun `script mounts, drops to the app uid and keeps the pidfile semantics`() {
@@ -198,6 +275,83 @@ class RootLaunchTest {
     }
 
     @Test
+    fun `cleanup unmounts in reverse order and verifies proc mount escaping`() {
+        val script = RootLaunch.cleanupScript(listOf("/data/root/proc", "/data/root/My Files"))
+        assertTrue(script.indexOf("umount -l '/data/root/My Files'") < script.indexOf("umount -l '/data/root/proc'"))
+        assertTrue(script.contains("grep -F ' /data/root/My\\040Files ' /proc/self/mounts"))
+        assertTrue(script.contains("then exit 1"))
+    }
+
+    @Test
+    fun `cleanup escapes tabs and backslashes in proc mount paths`() {
+        val script = RootLaunch.cleanupScript(listOf("/data/root/My\tFiles\\Backup"))
+        assertTrue(script.contains("grep -F ' /data/root/My\\011Files\\134Backup ' /proc/self/mounts"))
+    }
+
+    @Test
+    fun `cleanup reports a failed unmount verification`() {
+        var requested: String? = null
+        assertFalse(RootLaunch.cleanup(listOf("/data/root/proc")) { script ->
+            requested = script
+            1
+        })
+        assertTrue(requested!!.contains("umount -l '/data/root/proc'"))
+    }
+
+    @Test
+    fun `cleanup watchdog destroys su when its output read hangs`() {
+        assertHungCleanupFails(BlockingCleanupProcess(blockRead = true))
+    }
+
+    @Test
+    fun `cleanup watchdog destroys su when its process wait hangs`() {
+        assertHungCleanupFails(BlockingCleanupProcess(blockWait = true))
+    }
+
+    @Test
+    fun `cleanup rejects an empty mount ledger`() {
+        var called = false
+
+        assertFalse(RootLaunch.cleanup(emptyList()) {
+            called = true
+            0
+        })
+        assertFalse(called)
+    }
+
+    @Test
+    fun `cleanup is idempotent for missing paths and nested overmounts`() {
+        val targets = listOf("/data/root/missing", "/data/root/missing/overmount")
+        var calls = 0
+        repeat(2) {
+            assertTrue(RootLaunch.cleanup(targets) { script ->
+                calls += 1
+                assertTrue(script.contains("umount -l '/data/root/missing/overmount'"))
+                assertTrue(script.contains("umount -l '/data/root/missing'"))
+                assertTrue(script.indexOf("missing/overmount") < script.indexOf("'/data/root/missing'"))
+                0
+            })
+        }
+        assertEquals(2, calls)
+    }
+
+    @Test
+    fun `cached availability does not probe su`() {
+        val original = RootLaunch.suProbe
+        var probes = 0
+        RootLaunch.suProbe = { probes += 1; true }
+        try {
+            RootLaunch.invalidate()
+            assertNull(RootLaunch.cachedGrant())
+            assertFalse(RootLaunch.cachedAvailable(rootfs))
+            assertEquals(0, probes)
+        } finally {
+            RootLaunch.suProbe = original
+            RootLaunch.invalidate()
+        }
+    }
+
+    @Test
     fun `supplementary groups come from proc status`() {
         val status = File.createTempFile("status", ".txt").apply {
             writeText("Name:\tdsh_app\nGroups:\t3003 3002 1015 1023\n")
@@ -214,5 +368,101 @@ class RootLaunchTest {
             deleteOnExit()
         }
         assertArrayEquals(IntArray(0), RootLaunch.supplementaryGroups(status))
+    }
+
+    @Test
+    fun `terminate signals the whole recorded process group and verifies it is gone`() {
+        var captured: String? = null
+        assertTrue(RootLaunch.terminate(listOf(123, 456, 123)) { script ->
+            captured = script
+            0
+        })
+        val script = captured!!
+        // The engine is setsid's session leader, so the node child follows the group kill.
+        assertTrue(script.contains("kill -TERM -- -\"\$pid\""))
+        assertTrue(script.contains("kill -KILL -- -\"\$pid\""))
+        assertTrue(script.contains("kill -0 \"\$pid\""))
+        assertTrue("duplicates collapse", script.contains("for pid in 123 456; do"))
+        assertFalse("terminate never unmounts anything", script.contains("umount"))
+        assertFalse("terminate never scans the uid", script.contains("ps -u"))
+    }
+
+    @Test
+    fun `terminate reports failure when a recorded pid is still alive`() {
+        val finished = CountDownLatch(1)
+        var result: Boolean? = null
+        val worker = thread(isDaemon = true, name = "terminate-failure-test") {
+            result = RootLaunch.terminate(listOf(123)) { 1 }
+            finished.countDown()
+        }
+        assertTrue(finished.await(5, TimeUnit.SECONDS))
+        assertFalse(result!!)
+        worker.join(2000)
+    }
+
+    @Test
+    fun `terminate refuses an empty or invalid pid list`() {
+        var called = false
+        assertFalse(RootLaunch.terminate(listOf(0, -1)) {
+            called = true
+            0
+        })
+        assertFalse(called)
+        assertFalse(RootLaunch.terminate(emptyList()) { 0 })
+    }
+
+    @Test
+    fun `terminate watchdog destroys su when the kill script hangs`() {
+        val process = BlockingCleanupProcess(blockRead = true)
+        RootLaunch.terminateStarter = { process }
+        val finished = CountDownLatch(1)
+        var result: Boolean? = null
+        val worker = thread(isDaemon = true, name = "terminate-watchdog-test") {
+            result = RootLaunch.terminate(listOf(4242))
+            finished.countDown()
+        }
+        try {
+            assertTrue("terminate must have a bounded watchdog", finished.await(20, TimeUnit.SECONDS))
+            assertFalse(result!!)
+            assertTrue("a timed-out kill must be destroyed", process.destroyCalls > 0)
+        } finally {
+            process.destroy()
+            worker.join(2000)
+        }
+    }
+
+    @Test
+    fun `residual reports only this instance's targets and never unmounts`() {
+        var captured: String? = null
+        val targets = listOf("/data/local/tmp/dsh-root/proc", "/data/local/tmp/dsh-root/data/local/tmp/dsh-root")
+        val left = RootLaunch.residual(targets) { script ->
+            captured = script
+            "/data/local/tmp/dsh-root/proc\n"
+        }
+        assertEquals(listOf(targets[0]), left)
+        val script = captured!!
+        assertTrue(script.contains("grep -F ' ${targets[0]} ' /proc/self/mounts"))
+        assertTrue(script.contains("grep -F ' ${targets[1]} ' /proc/self/mounts"))
+        assertFalse("residual must not unmount", script.contains("umount"))
+        assertFalse("residual must not use a wildcard", script.contains("grep -F '/data/root"))
+    }
+
+    @Test
+    fun `residual ignores mounts that belong to someone else`() {
+        val targets = listOf("/data/local/tmp/dsh-root/proc")
+        assertEquals(emptyList<String>(), RootLaunch.residual(targets) { "/other/app/proc\n" })
+    }
+
+    @Test
+    fun `an unanswered residual probe keeps the targets as residual`() {
+        val targets = listOf("/data/local/tmp/dsh-root/proc")
+        assertEquals(targets, RootLaunch.residual(targets) { null })
+    }
+
+    @Test
+    fun `residual escapes proc mount paths`() {
+        val script = RootLaunch.residualScript(listOf("/data/local/tmp/dsh-root/My Files"))
+        assertTrue(script.contains("grep -F ' /data/local/tmp/dsh-root/My\\040Files ' /proc/self/mounts"))
+        assertTrue(script.contains("echo '/data/local/tmp/dsh-root/My Files'"))
     }
 }

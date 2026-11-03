@@ -154,7 +154,7 @@ class DiagnosticsPage extends ConsumerWidget {
         const DirectEngineSettings(),
         // Only where root launch can actually work: showing a dead switch on a
         // stock phone is worse than not showing it.
-        if (status.rootEngineAvailable || status.rootEngineEnabled) ...[
+        if (status.rootEngineSupported || status.rootEngineAvailable || status.rootEngineEnabled) ...[
           const SizedBox(height: 24),
           const RootEngineSettings(),
           const SizedBox(height: 24),

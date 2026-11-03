@@ -47,7 +47,11 @@ object SystemTuning {
         when {
             action.dangerous && !allowDangerous -> null
             action.apply == null -> null // its flow is applyAccessibility; never a one-liner
-            else -> apply(action, shell, observe)
+            else -> {
+                val before = observe(action)
+                if (before != null && !TuningCatalog.isSupported(action, before)) null
+                else applyObserved(action, before, shell, observe)
+            }
         }
     }
 
@@ -56,8 +60,14 @@ object SystemTuning {
         action: TuningCatalog.Action,
         shell: Shell = RootShell,
         observe: (TuningCatalog.Action) -> String? = { shell.read(it.read) },
+    ): Outcome = applyObserved(action, observe(action), shell, observe)
+
+    private fun applyObserved(
+        action: TuningCatalog.Action,
+        before: String?,
+        shell: Shell,
+        observe: (TuningCatalog.Action) -> String?,
     ): Outcome {
-        val before = observe(action)
         if (before == null) return Outcome(action.id, alreadyApplied = false, applied = false, observed = null, reason = "readFailed")
         if (action.isApplied(before)) return Outcome(action.id, alreadyApplied = true, applied = true, observed = before, reason = null)
         val command = action.apply ?: return Outcome(action.id, false, false, before, "needsExplicitFlow")

@@ -26,7 +26,9 @@ object RootLaunch {
     /** The rootfs is missing a piece the chroot path needs (see [unavailable]). */
     const val UNAVAILABLE = "rootUnavailable"
 
-    data class Plan(val script: String, val cwd: File)
+    @Volatile internal var canonicalRoot: (File) -> File = { it.canonicalFile }
+
+    data class Plan(val script: String, val cwd: File, val mountTargets: List<String>)
 
     data class Selection(val root: Boolean, val fallbackReason: String? = null)
 
@@ -98,15 +100,28 @@ object RootLaunch {
         if (!force) cachedGranted?.let { return it }
         synchronized(this) {
             if (!force) cachedGranted?.let { return it }
-            return probeSu().also { cachedGranted = it }
+            return suProbe().also { cachedGranted = it }
         }
     }
+
+    /** Cached facts only: status reads must never launch su or show an authorization prompt. */
+    fun cachedGrant(): Boolean? = cachedGranted
+
+    fun cachedAvailable(rootfs: File): Boolean = cachedGranted == true && unavailable(rootfs) == null
 
     fun invalidate() {
         cachedGranted = null
     }
 
     @Volatile private var cachedGranted: Boolean? = null
+    @Volatile internal var suProbe: () -> Boolean = ::probeSu
+    private val suRunner: (String) -> Process = { script ->
+        ProcessBuilder("su", "-c", script).redirectErrorStream(true).start()
+    }
+    @Volatile internal var cleanupStarter: (String) -> Process = suRunner
+    /** Test seams for [terminate] and [residual]; the real ones run the same `su -c`. */
+    @Volatile internal var terminateStarter: (String) -> Process = suRunner
+    @Volatile internal var residualStarter: (String) -> Process = suRunner
 
     private fun probeSu(): Boolean {
         val process = try {
@@ -138,6 +153,134 @@ object RootLaunch {
     /** The manager's own wait is unbounded; this is the app's ceiling on it. */
     private const val PROBE_TIMEOUT_SECONDS = 12L
 
+    /** Mounts created for every root launch, in mount order. */
+    fun standardMountTargets(rootfs: File): List<String> {
+        val root = rootfs.canonicalPath
+        return listOf("$root/proc", "$root/dev", "$root/sys", "$root$root")
+    }
+
+    /** A verified lazy-unmount script; /proc mounts escapes its path fields octally. */
+    fun cleanupScript(mountTargets: List<String>): String = buildString {
+        appendLine("#!/system/bin/sh")
+        appendLine("set -e")
+        for (target in mountTargets.asReversed()) {
+            appendLine("umount -l ${DirectLaunch.quote(target)} >/dev/null 2>&1 || true")
+            val procPath = target.replace("\\", "\\134").replace("\t", "\\011").replace(" ", "\\040")
+            appendLine("if grep -F ${DirectLaunch.quote(" $procPath ")} /proc/self/mounts >/dev/null 2>&1; then exit 1; fi")
+        }
+    }
+
+    fun cleanup(mountTargets: List<String>, run: (String) -> Int = ::runCleanup): Boolean =
+        mountTargets.isNotEmpty() && runCatching { run(cleanupScript(mountTargets)) == 0 }.getOrDefault(false)
+
+    /**
+     * Kills the recorded engine process tree through root. The engine is launched under
+     * `setsid`, so its own pid is the session/process-group leader: a negative-pid signal
+     * reaches the node child even when the pid file names only the wrapping sh. The
+     * script only touches the caller's pids — never a prefix, uid or global scan.
+     * Returns true when every pid is gone after TERM, a bounded poll and KILL.
+     */
+    fun terminate(pids: List<Int>, timeoutSeconds: Long = 5, run: (String) -> Int = ::runTerminate): Boolean {
+        val targets = pids.filter { it > 0 }.distinct()
+        if (targets.isEmpty()) return false
+        return runCatching { run(terminateScript(targets, timeoutSeconds)) == 0 }.getOrDefault(false)
+    }
+
+    fun terminateScript(pids: List<Int>, timeoutSeconds: Long = 5): String = buildString {
+        appendLine("#!/system/bin/sh")
+        val list = pids.joinToString(" ") { it.toString() }
+        appendLine("for pid in $list; do")
+        appendLine("  kill -TERM -- -\"\$pid\" >/dev/null 2>&1 || kill -TERM \"\$pid\" >/dev/null 2>&1 || true")
+        appendLine("  kill -TERM \"\$pid\" >/dev/null 2>&1 || true")
+        appendLine("done")
+        appendLine("i=0")
+        appendLine("while [ \$i -lt ${timeoutSeconds * 5} ]; do")
+        appendLine("  alive=0")
+        appendLine("  for pid in $list; do")
+        appendLine("    if kill -0 \"\$pid\" >/dev/null 2>&1; then alive=1; break; fi")
+        appendLine("  done")
+        appendLine("  if [ \$alive -eq 0 ]; then break; fi")
+        appendLine("  sleep 0.2")
+        appendLine("  i=\$((i+1))")
+        appendLine("done")
+        appendLine("for pid in $list; do")
+        appendLine("  kill -KILL -- -\"\$pid\" >/dev/null 2>&1 || kill -KILL \"\$pid\" >/dev/null 2>&1 || true")
+        appendLine("done")
+        appendLine("for pid in $list; do")
+        appendLine("  if kill -0 \"\$pid\" >/dev/null 2>&1; then exit 1; fi")
+        appendLine("done")
+        appendLine("exit 0")
+    }
+
+    /**
+     * Reports which of this instance's own mount targets are still visible. It never
+     * unmounts anything, so unrelated mounts from other apps/runs are untouched.
+     */
+    fun residual(targets: List<String>, run: (String) -> String? = ::runResidual): List<String> {
+        val checked = targets.filter { it.isNotBlank() }.distinct()
+        if (checked.isEmpty()) return emptyList()
+        val output = runCatching { run(residualScript(checked)) }.getOrNull() ?: return checked
+        val found = output.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+        return checked.filter { it in found }
+    }
+
+    fun residualScript(targets: List<String>): String = buildString {
+        appendLine("#!/system/bin/sh")
+        for (target in targets) {
+            val procPath = target.replace("\\", "\\134").replace("\t", "\\011").replace(" ", "\\040")
+            appendLine("if grep -F ${DirectLaunch.quote(" $procPath ")} /proc/self/mounts >/dev/null 2>&1; then echo ${DirectLaunch.quote(target)}; fi")
+        }
+        appendLine("exit 0")
+    }
+
+    private fun runCleanup(script: String): Int =
+        runWithWatchdog(cleanupStarter, script, "dsh-root-cleanup")?.first ?: -1
+
+    private fun runTerminate(script: String): Int =
+        runWithWatchdog(terminateStarter, script, "dsh-root-terminate")?.first ?: -1
+
+    private fun runResidual(script: String): String? =
+        runWithWatchdog(residualStarter, script, "dsh-root-residual")?.takeIf { it.first == 0 }?.second
+
+    private fun runWithWatchdog(
+        starter: (String) -> Process,
+        script: String,
+        name: String,
+    ): Pair<Int, String>? {
+        val process = try {
+            starter(script)
+        } catch (_: Exception) {
+            return null
+        }
+        val done = CountDownLatch(1)
+        var exit = -1
+        var output = ""
+        val worker = thread(isDaemon = true, name = name) {
+            try {
+                output = process.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
+                exit = process.waitFor()
+            } catch (_: Exception) {
+                exit = -1
+            } finally {
+                done.countDown()
+            }
+        }
+        return try {
+            if (done.await(CLEANUP_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                exit to output
+            } else {
+                process.destroy()
+                worker.join(2000)
+                null
+            }
+        } catch (_: Exception) {
+            process.destroy()
+            null
+        }
+    }
+
+    private const val CLEANUP_TIMEOUT_SECONDS = 12L
+
     /**
      * Consumes the one fully expanded proot argv/env (same contract as
      * [DirectLaunch.prepare]: overlays, performance defaults and caller settings are
@@ -147,7 +290,7 @@ object RootLaunch {
      * engine has no network.
      */
     fun prepare(rootfs: File, argv: List<String>, appUid: Int, appGids: IntArray): Plan {
-        val root = rootfs.canonicalFile
+        val root = canonicalRoot(rootfs)
         val rootPath = root.path
         val envAt = argv.indexOf("/usr/bin/env")
         require(envAt > 0 && argv.getOrNull(envAt + 1) == "-i") { "root engine: missing guest environment" }
@@ -218,7 +361,9 @@ object RootLaunch {
                 " /bin/sh -c " + q(argv.last())
             appendLine("exec $HOST_SETSID $HOST_CHROOT ${q(rootPath)} /bin/sh -c ${q(inner)}")
         }
-        return Plan(script, File(root, "root"))
+        val standard = standardMountTargets(root)
+        val mountTargets = standard.take(3) + binds.map { preChroot(it.guest) } + standard.drop(3)
+        return Plan(script, File(root, "root"), mountTargets)
     }
 
     /**

@@ -40,6 +40,8 @@ object DirectLaunch {
         val enabled: Boolean get() = requested && !failed
     }
 
+    @Volatile internal var absolutePath: (String) -> Boolean = { File(it).isAbsolute }
+
     /** Only mounts in the final launch authorize a host path (not a fixed /sdcard allowlist). */
     fun mounts(argv: List<String>, root: String): List<Mount> {
         val found = linkedMapOf<String, Mount>()
@@ -52,7 +54,7 @@ object DirectLaunch {
                 else -> continue
             }
             val parts = value.split(':')
-            require(parts.size in 1..2 && parts.all { File(it).isAbsolute }) { "direct engine: unsupported bind" }
+            require(parts.size in 1..2 && parts.all { absolutePath(it) }) { "direct engine: unsupported bind" }
             val host = parts[0].trimEnd('/').ifEmpty { "/" }
             val guest = parts.getOrElse(1) { parts[0] }.trimEnd('/').ifEmpty { "/" }
             if (host == root && guest == root) continue

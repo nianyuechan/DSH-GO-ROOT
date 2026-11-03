@@ -49,7 +49,9 @@ class RuntimeController private constructor(private val app: Context) : DshProce
     private val prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
     val manifest: RuntimeManifest by lazy { RuntimeManifest.load(app) }
-    private val installer by lazy { RuntimeInstaller(app, manifest, ::note) }
+    private val installer by lazy {
+        RuntimeInstaller(app, manifest, ::note, beforeReset = ::cleanupRootMountsForReset)
+    }
     @Volatile private var process: DshProcess? = null
     @Volatile private var lastLaunch: LaunchDiagnostics? = null
     /** The start in progress is turning PRoot's fake hard links into real files (see [L2sMigration]). */
@@ -64,6 +66,8 @@ class RuntimeController private constructor(private val app: Context) : DshProce
     @Volatile private var pendingPhoneStorage = false
     /** Whether the managed AGENTS.md tells the model about ```dsh-ui views (settings, on by default). */
     @Volatile private var pendingVisualReplies = true
+    /** Adopted engine with phone control requested: the running command cannot add the overlay. */
+    @Volatile private var phoneAdoptedNotice = false
 
     // Safe mode and failure detection. State that must survive the app being killed lives in [prefs].
     @Volatile private var safeState = SafeState.parse(prefs.getString(K_SAFE_STATE, null))
@@ -143,6 +147,7 @@ class RuntimeController private constructor(private val app: Context) : DshProce
         "directEngineActive" to (process?.executionMode == "direct"),
         "directEngineFallbackReason" to lastLaunch?.fallbackReason,
         "rootEngineEnabled" to rootEngine().enabled,
+        "rootEngineSupported" to rootEngineSupported(),
         "rootEngineAvailable" to rootEngineAvailable(),
         "rootEngineActive" to (process?.executionMode == "chroot"),
         "rootEngineFallbackReason" to lastLaunch?.fallbackReason?.takeIf { it == RootLaunch.FAILED || it == RootLaunch.UNAVAILABLE },
@@ -151,6 +156,7 @@ class RuntimeController private constructor(private val app: Context) : DshProce
         "launchSpawned" to (lastLaunch?.spawned == true),
         "launchFailureReason" to lastLaunch?.failureReason,
         "tidyingFiles" to tidyingFiles,
+        "phoneAdoptedNotice" to phoneAdoptedNotice,
     )
 
     private fun directEngine() = DirectLaunch.Preference(
@@ -163,30 +169,38 @@ class RuntimeController private constructor(private val app: Context) : DshProce
         manifest.raw.optJSONObject("directEngine")?.optInt("schema") == 2
     }.getOrDefault(false)
 
-    private fun rootEngine() = RootLaunch.Preference(
-        saved = if (prefs.contains(K_ROOT_ENGINE)) prefs.getBoolean(K_ROOT_ENGINE, false) else null,
-        available = rootEngineAvailable(),
-        failedRuntime = prefs.getString(K_ROOT_FAILED, null),
-        runtime = runCatching { manifest.runtimeVersion }.getOrNull(),
-    )
+    private fun rootEngine(probe: Boolean = false): RootLaunch.Preference {
+        val saved = if (prefs.contains(K_ROOT_ENGINE)) prefs.getBoolean(K_ROOT_ENGINE, false) else null
+        val available = if (probe && saved == true) {
+            rootEngineSupported() && RootLaunch.granted()
+        } else {
+            rootEngineAvailable()
+        }
+        return RootLaunch.Preference(
+            saved = saved,
+            available = available,
+            failedRuntime = prefs.getString(K_ROOT_FAILED, null),
+            runtime = runCatching { manifest.runtimeVersion }.getOrNull(),
+        )
+    }
 
-    /**
-     * su plus a rootfs that carries the chroot tools. Probing su can pop the root
-     * manager's dialog, so the cached verdict is used unless nothing is known yet:
-     * the engine status is polled and must not turn every read into an su call.
-     */
+    /** Rootfs tool support is independent from the cached su grant used by availability. */
+    private fun rootEngineSupported(): Boolean = runCatching {
+        RootLaunch.unavailable(installer.rootfs) == null
+    }.getOrDefault(false)
+
     private fun rootEngineAvailable(): Boolean = runCatching {
-        RootLaunch.unavailable(installer.rootfs) == null && RootLaunch.granted()
+        RootLaunch.cachedAvailable(installer.rootfs)
     }.getOrDefault(false)
 
     /**
      * Try to take over the engine the previous app process left running. Returns the
      * process on success, null when the caller should spawn a fresh one.
      *
-     * Every rejection clears the record: a handoff that no longer describes a live
-     * engine must not be retried on the next start either.
+     * Only a gone or invalid identity clears the record. A retained identity blocks
+     * every launch mode, including safe/PRoot, so one rootfs cannot gain two engines.
      */
-    private fun tryAdopt(p: DshProcess): DshProcess? {
+    private fun tryAdopt(p: DshProcess, allowAdopt: Boolean): DshProcess? {
         val record = EngineHandoff.load(app.filesDir) ?: return null
         val root = installer.rootfs.canonicalPath
         log("[dsh-app] adoption: considering pid ${record.pid} on port ${record.port}", "system")
@@ -202,20 +216,24 @@ class RuntimeController private constructor(private val app: Context) : DshProce
             },
             health = AdoptedEngine.httpHealthCheck(),
         )
-        if (!result.adopted) {
-            EngineHandoff.clear(app.filesDir)
-            log("[dsh-app] not adopting the previous engine (${result.reason}); starting fresh", "system")
-            return null
+        when (adoptionAction(result, allowAdopt)) {
+            AdoptionAction.BLOCK -> {
+                log("[dsh-app] previous engine identity is retained; blocking a duplicate start", "system")
+                throw IllegalStateException(
+                    if (result.adopted) "previous engine is still running; stop it before changing launch mode"
+                    else "previous engine is alive but unreachable; retry start",
+                )
+            }
+            AdoptionAction.START_FRESH -> {
+                EngineHandoff.clear(app.filesDir)
+                log("[dsh-app] not adopting the previous engine (${result.reason}); starting fresh", "system")
+                return null
+            }
+            AdoptionAction.ADOPT -> Unit
         }
-        return try {
-            p.adopt(record)
-            log("[dsh-app] adopted the previous engine on port ${record.port}", "system")
-            p
-        } catch (e: Exception) {
-            EngineHandoff.clear(app.filesDir)
-            log("[dsh-app] adoption failed (${e.javaClass.simpleName}); starting fresh", "system")
-            null
-        }
+        p.adopt(record)
+        log("[dsh-app] adopted the previous engine on port ${record.port}", "system")
+        return p
     }
 
     /**
@@ -300,7 +318,9 @@ class RuntimeController private constructor(private val app: Context) : DshProce
      */
     @Synchronized fun setRootEngine(enabled: Boolean) {
         check(process == null && phase !in setOf(Phase.STARTING, Phase.RUNNING, Phase.STOPPING, Phase.INSTALLING) && !resetting) { "stop the engine before changing its launch method" }
-        check(!enabled || rootEngineAvailable()) { "root launch is unavailable: su or the chroot tools are missing" }
+        check(!enabled || (rootEngineSupported() && RootLaunch.granted(force = true))) {
+            "root launch is unavailable: su or the chroot tools are missing"
+        }
         prefs.edit().putBoolean(K_ROOT_ENGINE, enabled).remove(K_ROOT_FAILED)
             .putBoolean(K_DIRECT_ENGINE, false).remove(K_DIRECT_FAILED).apply()
         emitStatus()
@@ -432,7 +452,15 @@ class RuntimeController private constructor(private val app: Context) : DshProce
     }
 
     @Synchronized internal fun startProcess() {
-        if (process != null || phase == Phase.INSTALLING || phase == Phase.STOPPING) return
+        if (phase == Phase.INSTALLING || phase == Phase.STOPPING) return
+        val retained = process
+        if (retained != null) {
+            // A timed-out stop keeps ownership until a retry finishes the mount cleanup.
+            // Once the engine is gone and the mounts are clean, the user may start again.
+            if (phase != Phase.ERROR || retained.alive || !retained.mountCleanupComplete) return
+            process = null
+        }
+        phoneAdoptedNotice = false
         lastLaunch = null
         if (!installer.isCurrent()) {
             error = "runtime not installed"
@@ -490,24 +518,35 @@ class RuntimeController private constructor(private val app: Context) : DshProce
                     PhoneControl.get(app).onEngineStopped()
                     return@execute
                 }
-                val p = DshProcess(app, manifest, installer.rootfs, this)
+                val p = DshProcess(app, manifest, installer.rootfs, this, adoptedLiveness = ::liveness)
                 launched = p
                 lastLaunch = p.launchDiagnostics
                 process = p
                 timeline.spawned()
                 val direct = directEngine()
-                val root = rootEngine()
+                val root = rootEngine(probe = true)
+                val rootGranted = root.requested && RootLaunch.granted()
                 // Adoption comes before any spawn: if the previous engine is still running
                 // and answers with the recorded token, taking it over is both faster and
                 // the only way the user keeps a live conversation across an app restart.
                 // Only the root path leaves a detached engine behind (setsid).
-                val adopted = if (!safe && root.requested && RootLaunch.granted()) tryAdopt(p) else null
+                val adopted = tryAdopt(p, allowAdopt = !safe && rootGranted)
                 if (adopted != null) {
-                    if (phone) PhoneControl.get(app).launched(p.phoneMounted)
+                    if (phone) {
+                        PhoneControl.get(app).launched(p.phoneMounted)
+                        if (!p.phoneMounted) {
+                            // An adopted engine already runs the command it was spawned with;
+                            // there is no way to append the overlay. Say so instead of silently
+                            // leaving phone control off.
+                            phoneAdoptedNotice = true
+                            log("[dsh-app] adopted engine: phone control is unavailable in an adopted engine; restart the engine to use it", "system")
+                            emitStatus()
+                        }
+                    }
                     return@execute
                 }
                 p.start(env, if (storage) PhoneStorage.binds() else emptyList(), safe, phone, direct.requested, direct.failed,
-                    rootEngine = root.requested, rootFailed = root.failed, rootGranted = root.requested && RootLaunch.granted()) { actualDirect ->
+                    rootEngine = root.requested, rootFailed = root.failed, rootGranted = rootGranted) { actualDirect ->
                     GuestSetup.writeAgentsMd(installer.rootfs, storage, phone, pendingVisualReplies, actualDirect)
                 }
                 if (phone) PhoneControl.get(app).launched(p.phoneMounted)
@@ -517,6 +556,11 @@ class RuntimeController private constructor(private val app: Context) : DshProce
                 launched?.launchDiagnostics?.failed("startFailed")
                 launched?.let { p -> p.failStart(e.message ?: e.javaClass.simpleName); p.awaitExit() }
                 if (gen != runGen) return@execute
+                if (launched?.mountCleanupComplete == false) {
+                    error = "start cleanup incomplete; retry reset before deleting the runtime"
+                    setPhase(Phase.STOPPING)
+                    return@execute
+                }
                 process = null
                 PhoneControl.get(app).onEngineStopped()
                 if (stopGen >= gen) return@execute
@@ -576,6 +620,29 @@ class RuntimeController private constructor(private val app: Context) : DshProce
 
     /** A line of the app's own into the runtime log. */
     internal fun note(line: String) = log(line, "system")
+
+    /** Reset may delete a rootfs only after its recorded engine is gone and every mount is off. */
+    private fun cleanupRootMountsForReset() {
+        EngineHandoff.cleanupForReset(
+            app.filesDir,
+            isAlive = { record ->
+                AdoptedEngine.check(
+                    record = record,
+                    rootfs = File(record.rootfs),
+                    myUid = android.os.Process.myUid(),
+                    liveness = ::liveness,
+                    health = AdoptedEngine.HealthCheck { _, _ -> false },
+                ).record != null
+            },
+            mountCleanup = { RootLaunch.cleanup(it) },
+            reapPending = { pending ->
+                DshProcess(
+                    app, manifest, File(pending.rootfs), this,
+                    initialCleanupPids = setOfNotNull(pending.pid),
+                ).killStrays()
+            },
+        )
+    }
 
     /**
      * Stops DSH and waits for it to exit, then deletes the runtime with everything in /root except
@@ -887,6 +954,7 @@ class RuntimeController private constructor(private val app: Context) : DshProce
                     port = source.port,
                     token = token,
                     rootfs = installer.rootfs.canonicalPath,
+                    mountTargets = source.mountTargets,
                 ))
             } catch (e: Exception) {
                 log("[dsh-app] could not record the engine for adoption: ${e.javaClass.simpleName}", "system")
@@ -916,23 +984,45 @@ class RuntimeController private constructor(private val app: Context) : DshProce
         main.postDelayed({ if (gen == runGen && phase == Phase.RUNNING && process != null) onHealthy() }, SafePolicy.HEALTHY_MS)
     }
 
+    /** A stop outlived its watchdog: report a retryable error instead of sitting in STOPPING. */
+    override fun onStopTimeout(source: DshProcess) {
+        if (source !== process || phase != Phase.STOPPING) return
+        log("[dsh-app] stop timed out; mounts may remain, retry the stop", "system")
+        phoneAdoptedNotice = false
+        error = "stop cleanup incomplete: retry the stop"
+        setPhase(Phase.ERROR)
+        DshService.stopSelfIfRunning(app)
+    }
+
     @Synchronized override fun onExit(source: DshProcess, code: Int, expected: Boolean) {
         if (source !== process) return
+        if (!source.mountCleanupComplete) {
+            // Never sit in STOPPING forever: keep the handoff for a retry and say so.
+            if (!resetting) {
+                log("[dsh-app] stop cleanup incomplete; handoff retained for a safe retry", "system")
+                phoneAdoptedNotice = false
+                error = "stop cleanup incomplete: retry the stop"
+                setPhase(Phase.ERROR)
+                DshService.stopSelfIfRunning(app)
+            }
+            return
+        }
         try {
-            // The engine is gone either way: an adoption record now points at nothing.
-            // Keeping it would make the next start pay a failed health check first.
-            EngineHandoff.clear(app.filesDir)
+            // A failed mount cleanup retains the targets so reset can retry before deleting.
+            if (source.mountCleanupComplete) EngineHandoff.clear(app.filesDir)
             if (!expected && stopGen < runGen) {
                 source.launchDiagnostics.failed(if (source.startupError != null) "startFailed" else "exit:$code")
             }
             process = null
+            phoneAdoptedNotice = false
             PhoneControl.get(app).onEngineStopped()
             baseUrl = null
             token = null
             healthyAt = null
             log("[dsh-app] DSH exited with code $code", "system")
             if (expected || stopGen >= runGen) {
-                if (!resetting && phase == Phase.STOPPING) setPhase(Phase.INSTALLED)
+                // A retry after a timed-out stop finishes in ERROR; accept that as stopped.
+                if (!resetting && (phase == Phase.STOPPING || phase == Phase.ERROR)) setPhase(Phase.INSTALLED)
                 DshService.stopSelfIfRunning(app)
                 return
             }

@@ -8931,6 +8931,12 @@ class L10nEn extends L10n {
   String get phoneEngineStoppingEllipsis => 'Stopping…';
 
   @override
+  String get phoneEngineStopIncomplete => 'Stop did not finish; retry the stop.';
+
+  @override
+  String get phoneEngineAdoptedPhoneOff => 'Phone control is off in the adopted engine; restart the engine to use it.';
+
+  @override
   String get phoneEngineStoppedNextSafe => 'Stopped · Next start in Safe mode';
 
   @override
@@ -10409,6 +10415,41 @@ class L10nEn extends L10n {
   @override
   String get tuningAllowDangerousHint =>
       'Lets the accessibility action run. It changes what this app can read on screen, so it stays off until you switch it on.';
+
+  @override
+  String get tuningPhantomTitle => 'Disable phantom process killer';
+
+  @override
+  String get tuningPhantomDetail =>
+      'Keeps the system from killing the engine\'s node child processes in the background; expected to persist across reboots.';
+
+  @override
+  String get tuningBatteryExemptTitle => 'Battery whitelist';
+
+  @override
+  String get tuningBatteryExemptDetail =>
+      'Prevents the system from treating DSH Go as a background app it can reclaim at any time.';
+
+  @override
+  String get tuningStandbyBucketTitle => 'Standby bucket: active';
+
+  @override
+  String get tuningStandbyBucketDetail =>
+      'Prevents restrictive ROMs from moving the app into a constrained standby bucket.';
+
+  @override
+  String get tuningMiuiPowerKeeperTitle => 'MIUI battery exemption';
+
+  @override
+  String get tuningMiuiPowerKeeperDetail =>
+      'Handles Xiaomi/Redmi\'s separate non-AOSP background restriction, applied only after detecting it on the ROM.';
+
+  @override
+  String get tuningAccessibilityAutoTitle => 'Restore accessibility service automatically';
+
+  @override
+  String get tuningAccessibilityAutoDetail =>
+      'Lets the app restore its service after the system disables it. This changes the device\'s security posture and is off by default.';
 
   @override
   String get phoneLaunchStartFailed => 'Didn\'t finish starting';
