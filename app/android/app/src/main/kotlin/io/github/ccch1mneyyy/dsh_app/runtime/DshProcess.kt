@@ -191,7 +191,11 @@ class DshProcess(
         check(!java.nio.file.Files.exists(pidFile.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) { "cannot remove stale runtime pid file" }
         port = pickPort()
         val tmp = File(context.cacheDir, "proot-tmp").apply { mkdirs() }
-        if (cleanup.canPruneTemp) {
+        if (
+            cleanup.canPruneTemp && processesReaped && rootStopVerified &&
+            mountTargetsComplete && mountCleanupComplete &&
+            !EngineHandoff.pendingFile(context.filesDir).exists()
+        ) {
             val reclaimed = ProotTempFiles.prune(tmp) { pid -> processReader.uid(pid) == null }
             if (reclaimed.removed > 0) listener.onLog("[dsh-app] reclaimed ${reclaimed.removed} stale proot temporary directories", "system")
             if (reclaimed.incomplete) listener.onLog("[dsh-app] proot temporary cleanup incomplete; retained entries for a later start", "system")

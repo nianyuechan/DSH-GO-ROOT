@@ -158,6 +158,8 @@ class DshProcessTest {
         reap: () -> Boolean = { true },
         rootTerminate: (List<Int>) -> Boolean = { true },
         rootResidual: (List<String>) -> List<String> = { emptyList() },
+        logicalRoot: String = "/data/user/0/io.github.ccch1mneyyy.dsh_app/files/runtime/rootfs",
+        enumerationFails: Boolean = true,
     ): Pair<DshProcess, File> {
         val base = kotlin.io.path.createTempDirectory("spawn-failure").toFile()
         val actualRoot = File(base, "rootfs").apply { mkdirs() }
@@ -168,7 +170,6 @@ class DshProcessTest {
                 setExecutable(true)
             }
         }
-        val logicalRoot = "/data/user/0/io.github.ccch1mneyyy.dsh_app/files/runtime/rootfs"
         val launchRoot = LogicalRootFs(actualRoot, logicalRoot)
         val context = allocate(TestContext::class.java).apply {
             directory = base
@@ -194,7 +195,7 @@ class DshProcessTest {
             mountCleanup = cleanup,
             persistPendingMounts = persistPending,
             clearPendingMounts = clearPending,
-            runtimeProcessReader = CleanupReader(4242, uid, logicalRoot, enumerationFails = true),
+            runtimeProcessReader = CleanupReader(4242, uid, logicalRoot, enumerationFails = enumerationFails),
             processStarter = processStarter,
             appPid = { 9999 },
             rootTerminate = rootTerminate,
@@ -449,7 +450,7 @@ class DshProcessTest {
         var signalsReap = false
         val killed = mutableListOf<Int>()
         fun coldProcess(identity: EngineHandoff.PendingMounts) = DshProcess(
-            context = allocate(ContextWrapper::class.java),
+            context = allocate(TestContext::class.java).apply { directory = filesDir },
             manifest = allocate(RuntimeManifest::class.java),
             rootfs = File(identity.rootfs),
             listener = listener,
@@ -480,6 +481,31 @@ class DshProcessTest {
         assertEquals(1, mountCleanups)
         assertTrue(4242 in killed)
         assertFalse(EngineHandoff.pendingFile(filesDir).exists())
+    }
+
+    @Test
+    fun `pending root mounts block proot temp pruning`() {
+        val child = BlockingProcess()
+        val listener = RecordingListener()
+        val logicalRoot = "/pending-prune-${System.nanoTime()}"
+        val (process, base) = spawnHarness(
+            listener = listener,
+            processStarter = { child },
+            logicalRoot = logicalRoot,
+            enumerationFails = false,
+        )
+        try {
+            val stale = File(base, "proot-tmp/proot-2147483647-abcdef").apply { mkdirs() }
+            EngineHandoff.savePending(base, EngineHandoff.PendingMounts(logicalRoot, listOf("$logicalRoot/proc")))
+
+            process.start(emptyMap())
+
+            assertTrue("retained root cleanup state must fail closed", stale.isDirectory)
+        } finally {
+            child.destroy()
+            process.awaitExit(5_000)
+            base.deleteRecursively()
+        }
     }
 
     @Test
