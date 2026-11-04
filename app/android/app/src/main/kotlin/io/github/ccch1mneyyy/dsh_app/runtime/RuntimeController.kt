@@ -53,6 +53,7 @@ class RuntimeController private constructor(private val app: Context) : DshProce
         RuntimeInstaller(app, manifest, ::note, beforeReset = ::cleanupRootMountsForReset)
     }
     @Volatile private var process: DshProcess? = null
+    @Volatile private var adoptionRecovery: AdoptionRecovery? = null
     @Volatile private var lastLaunch: LaunchDiagnostics? = null
     /** The start in progress is turning PRoot's fake hard links into real files (see [L2sMigration]). */
     @Volatile private var tidyingFiles = false
@@ -219,9 +220,11 @@ class RuntimeController private constructor(private val app: Context) : DshProce
         when (adoptionAction(result, allowAdopt)) {
             AdoptionAction.BLOCK -> {
                 log("[dsh-app] previous engine identity is retained; blocking a duplicate start", "system")
-                throw IllegalStateException(
+                throw AdoptionBlockedException(
                     if (result.adopted) "previous engine is still running; stop it before changing launch mode"
                     else "previous engine is alive but unreachable; retry start",
+                    record = checkNotNull(result.record),
+                    healthRetry = allowAdopt && result.healthRetry,
                 )
             }
             AdoptionAction.START_FRESH -> {
@@ -234,6 +237,46 @@ class RuntimeController private constructor(private val app: Context) : DshProce
         p.adopt(record)
         log("[dsh-app] adopted the previous engine on port ${record.port}", "system")
         return p
+    }
+
+    private fun onAdopted(p: DshProcess, phone: Boolean) {
+        if (!phone) return
+        PhoneControl.get(app).launched(p.phoneMounted)
+        if (!p.phoneMounted) {
+            // An adopted engine already runs the command it was spawned with;
+            // there is no way to append the overlay. Say so instead of silently
+            // leaving phone control off.
+            phoneAdoptedNotice = true
+            log("[dsh-app] adopted engine: phone control is unavailable in an adopted engine; restart the engine to use it", "system")
+            emitStatus()
+        }
+    }
+
+    private fun scheduleAdoptionRecovery(gen: Int, p: DshProcess, record: EngineHandoff.Record, phone: Boolean) {
+        val recovery = AdoptionRecovery(
+            record = record,
+            health = AdoptedEngine.httpHealthCheck(),
+            schedule = { probe ->
+                main.postDelayed({
+                    if (gen == runGen && stopGen < gen && phase == Phase.ERROR && process == null && !resetting) {
+                        worker.execute(probe)
+                    }
+                }, ADOPTION_RETRY_MS)
+            },
+            adopt = { recoverAdoption(gen, p, it, phone) },
+        )
+        adoptionRecovery = recovery
+        recovery.start()
+    }
+
+    @Synchronized private fun recoverAdoption(gen: Int, p: DshProcess, record: EngineHandoff.Record, phone: Boolean) {
+        if (gen != runGen || stopGen >= gen || phase != Phase.ERROR || process != null || resetting) return
+        adoptionRecovery = null
+        process = p
+        error = null
+        setPhase(Phase.STARTING)
+        p.adopt(record)
+        onAdopted(p, phone)
     }
 
     /**
@@ -460,6 +503,8 @@ class RuntimeController private constructor(private val app: Context) : DshProce
             if (phase != Phase.ERROR || retained.alive || !retained.mountCleanupComplete) return
             process = null
         }
+        adoptionRecovery?.cancel()
+        adoptionRecovery = null
         phoneAdoptedNotice = false
         lastLaunch = null
         if (!installer.isCurrent()) {
@@ -481,12 +526,13 @@ class RuntimeController private constructor(private val app: Context) : DshProce
         timeline.requested()
         worker.execute {
             var launched: DshProcess? = null
+            var phone = false
             try {
                 noteDns(GuestSetup.writeResolvConf(app, installer.rootfs), DnsConfigSource.START)
                 val storage = pendingPhoneStorage && PhoneStorage.isGranted(app) && PhoneStorage.binds().isNotEmpty()
                 PhoneStorage.syncShortcut(installer.rootfs, storage)
                 // Phone control: bridge up and guest files written before DSH starts; off in safe mode.
-                val phone = PhoneControl.get(app).prepareLaunch(installer.rootfs, safe) { log(it, "system") }
+                phone = PhoneControl.get(app).prepareLaunch(installer.rootfs, safe) { log(it, "system") }
                 if (!safe && !SessionSearchGuest.writeFiles(installer.rootfs)) {
                     log("[dsh-app] message search overlay not written; searching matches titles only", "system")
                 }
@@ -532,17 +578,7 @@ class RuntimeController private constructor(private val app: Context) : DshProce
                 // Only the root path leaves a detached engine behind (setsid).
                 val adopted = tryAdopt(p, allowAdopt = !safe && rootGranted)
                 if (adopted != null) {
-                    if (phone) {
-                        PhoneControl.get(app).launched(p.phoneMounted)
-                        if (!p.phoneMounted) {
-                            // An adopted engine already runs the command it was spawned with;
-                            // there is no way to append the overlay. Say so instead of silently
-                            // leaving phone control off.
-                            phoneAdoptedNotice = true
-                            log("[dsh-app] adopted engine: phone control is unavailable in an adopted engine; restart the engine to use it", "system")
-                            emitStatus()
-                        }
-                    }
+                    onAdopted(p, phone)
                     return@execute
                 }
                 p.start(env, if (storage) PhoneStorage.binds() else emptyList(), safe, phone, direct.requested, direct.failed,
@@ -551,6 +587,19 @@ class RuntimeController private constructor(private val app: Context) : DshProce
                 }
                 if (phone) PhoneControl.get(app).launched(p.phoneMounted)
             } catch (e: Throwable) {
+                val blocked = e as? AdoptionBlockedException
+                val pending = launched
+                if (blocked?.healthRetry == true && pending != null && gen == runGen && stopGen < gen) {
+                    // The launch-time identity check already passed. Poll only HTTP: repeating
+                    // the /proc check here would issue su again for an ordinary status refresh.
+                    process = null
+                    PhoneControl.get(app).onEngineStopped()
+                    error = "start failed: ${e.message}"
+                    log("[dsh-app] $error", "system")
+                    setPhase(Phase.ERROR)
+                    scheduleAdoptionRecovery(gen, pending, blocked.record, phone)
+                    return@execute
+                }
                 // Keep ownership while the old UID sweep runs, including a
                 // failure after spawning but before the waiter was allocated.
                 launched?.launchDiagnostics?.failed("startFailed")
@@ -574,6 +623,8 @@ class RuntimeController private constructor(private val app: Context) : DshProce
 
     @Synchronized internal fun stopProcess() {
         if (phase == Phase.INSTALLING) return
+        adoptionRecovery?.cancel()
+        adoptionRecovery = null
         stopGen = runGen
         val p = process
         if (p == null) {
@@ -649,6 +700,8 @@ class RuntimeController private constructor(private val app: Context) : DshProce
      * [keep], which the next install puts back.
      */
     fun reset(keep: Set<ResetKeep> = emptySet(), onDone: (Throwable?) -> Unit) {
+        adoptionRecovery?.cancel()
+        adoptionRecovery = null
         stopGen = runGen
         resetting = true
         setPhase(Phase.STOPPING)
@@ -1132,6 +1185,7 @@ class RuntimeController private constructor(private val app: Context) : DshProce
 
     companion object {
         private const val PREFS = "dsh_runtime"
+        private const val ADOPTION_RETRY_MS = 1_000L
         private const val K_SAFE_STATE = "safeState"
         private const val K_SAFE_REASON = "safeReason"
         private const val K_STRIKES = "strikes"

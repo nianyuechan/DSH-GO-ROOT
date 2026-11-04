@@ -86,7 +86,13 @@ object AdoptedEngine {
         }
     }
 
-    data class Result(val adopted: Boolean, val reason: String? = null, val record: EngineHandoff.Record? = null)
+    data class Result(
+        val adopted: Boolean,
+        val reason: String? = null,
+        val record: EngineHandoff.Record? = null,
+        /** The pid identity passed every check; later HTTP-only retries may reuse it safely. */
+        val healthRetry: Boolean = false,
+    )
 
     /** The engine's editable guest entry, matched against /proc/<pid>/cmdline. */
     private const val ENGINE_COMMAND = "/opt/node"
@@ -116,7 +122,7 @@ object AdoptedEngine {
             }
         }
         return if (health.healthy(record.port, record.token)) Result(true, null, record)
-        else Result(false, UNREACHABLE, record)
+        else Result(false, UNREACHABLE, record, healthRetry = true)
     }
 }
 
@@ -127,6 +133,42 @@ internal fun adoptionAction(result: AdoptedEngine.Result, allowAdopt: Boolean): 
     result.adopted && allowAdopt -> AdoptionAction.ADOPT
     result.record != null -> AdoptionAction.BLOCK
     else -> AdoptionAction.START_FRESH
+}
+
+internal class AdoptionBlockedException(
+    message: String,
+    val record: EngineHandoff.Record,
+    val healthRetry: Boolean,
+) : IllegalStateException(message)
+
+/** Serial HTTP-only retries for an identity that already passed [AdoptedEngine.check]. */
+internal class AdoptionRecovery(
+    private val record: EngineHandoff.Record,
+    private val health: AdoptedEngine.HealthCheck,
+    private val schedule: (() -> Unit) -> Unit,
+    private val adopt: (EngineHandoff.Record) -> Unit,
+) {
+    @Volatile private var active = true
+
+    fun start() {
+        if (active) schedule(::probe)
+    }
+
+    fun cancel() {
+        active = false
+    }
+
+    private fun probe() {
+        if (!active) return
+        val healthy = health.healthy(record.port, record.token)
+        if (!active) return
+        if (healthy) {
+            active = false
+            adopt(record)
+        } else {
+            schedule(::probe)
+        }
+    }
 }
 
 /** TCP monitoring for an adopted engine, with process identity as the exit arbiter. */

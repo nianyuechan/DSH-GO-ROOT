@@ -2,6 +2,7 @@ package io.github.ccch1mneyyy.dsh_app.runtime
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -153,5 +154,74 @@ class AdoptedEngineTest {
         )
         assertFalse(result.adopted)
         assertFalse("health must not run without a live pid", probed)
+    }
+
+    @Test
+    fun `only a verified live identity may recover through health probes`() {
+        assertTrue(check(health = healthy(ok = false)).healthRetry)
+        assertFalse(check(liveness = { AdoptedEngine.Liveness.Unknown }).healthRetry)
+        assertFalse(check(liveness = { AdoptedEngine.Liveness.Absent }).healthRetry)
+    }
+
+    @Test
+    fun `a blocked engine is adopted when a later health probe recovers`() {
+        var healthy = false
+        val pending = ArrayDeque<() -> Unit>()
+        var adopted: EngineHandoff.Record? = null
+        val recovery = AdoptionRecovery(
+            record = record,
+            health = AdoptedEngine.HealthCheck { _, _ -> healthy },
+            schedule = { pending += it },
+            adopt = { adopted = it },
+        )
+
+        recovery.start()
+        assertNull(adopted)
+        assertEquals(1, pending.size)
+
+        healthy = true
+        pending.removeFirst().invoke()
+
+        assertEquals(record, adopted)
+        assertTrue("a recovered engine must not keep polling", pending.isEmpty())
+    }
+
+    @Test
+    fun `a failed recovery probe leaves another retry without adopting`() {
+        val pending = ArrayDeque<() -> Unit>()
+        var adopted = false
+        val recovery = AdoptionRecovery(
+            record = record,
+            health = healthy(ok = false),
+            schedule = { pending += it },
+            adopt = { adopted = true },
+        )
+
+        recovery.start()
+        pending.removeFirst().invoke()
+
+        assertFalse(adopted)
+        assertEquals("the retry entry stays available while recovery continues", 1, pending.size)
+    }
+
+    @Test
+    fun `cancelling recovery prevents a late health answer from adopting`() {
+        val pending = ArrayDeque<() -> Unit>()
+        var healthy = false
+        var adopted = false
+        val recovery = AdoptionRecovery(
+            record = record,
+            health = AdoptedEngine.HealthCheck { _, _ -> healthy },
+            schedule = { pending += it },
+            adopt = { adopted = true },
+        )
+        recovery.start()
+        recovery.cancel()
+
+        healthy = true
+        pending.removeFirst().invoke()
+
+        assertFalse(adopted)
+        assertTrue(pending.isEmpty())
     }
 }
