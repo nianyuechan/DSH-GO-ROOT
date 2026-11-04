@@ -7273,6 +7273,13 @@ class L10nEn extends L10n {
   String get fileChatFallback => 'chat';
 
   @override
+  String get hostDetailsConnectionType => 'Connection type';
+
+  @override
+  String get hostDetailsSshNetworkHint =>
+      'Uses an SSH tunnel. LAN / P2P route inspection and latency measurements are not available for this connection.';
+
+  @override
   String get hubSessionDetails => 'Chat details';
 
   @override
@@ -8846,6 +8853,13 @@ class L10nEn extends L10n {
 
   @override
   String get performanceSystemMotion => 'Also follows the system\'s remove animations setting';
+
+  @override
+  String get performanceFluid => 'Fluid motion';
+
+  @override
+  String get performanceFluidHint =>
+      'Springy releases, a soft glow under your finger, cards that open into pages. Costs almost no battery';
 
   @override
   String get performanceFollowMode => 'Follow the performance mode';
@@ -14296,6 +14310,29 @@ class L10nEn extends L10n {
   String get remoteNetworkObservedAt => 'Last checked';
 
   @override
+  String get stateWorkspaceFilesHint => 'Files uploaded to the current workspace:';
+
+  @override
+  String get stateRemoteUploadNameInvalid =>
+      'The host rejected the filename. Shorten it or remove special characters and try again.';
+
+  @override
+  String get stateRemoteUploadWorkspaceUnavailable => 'This chat has no writable working directory';
+
+  @override
+  String get stateRemoteUploadWorkspaceChanged => 'The working directory changed. Check it before uploading again.';
+
+  @override
+  String get stateRemoteUploadLimit => 'The host refused the upload. Check the file size or try again later.';
+
+  @override
+  String get stateRemoteUploadUnsupported =>
+      'This host does not support file uploads. Update its Remote plugin and reconnect.';
+
+  @override
+  String get stateRemoteUploadTooLarge => 'The file exceeds the remote upload protocol\'s size limit';
+
+  @override
   String get riskDontShowAgain => 'Don’t show again';
 
   @override
@@ -14416,6 +14453,9 @@ class L10nEn extends L10n {
 
   @override
   String get searchNeedsEngineField => 'Available when the host has it';
+
+  @override
+  String get searchNeedsAnimations => 'Available with animations on';
 
   @override
   String get searchNeedsChat => 'Available with a chat open';
@@ -14591,6 +14631,9 @@ class L10nEn extends L10n {
 
   @override
   String get searchKwAnimations => 'animation,motion,reduce motion';
+
+  @override
+  String get searchKwFluidMotion => 'fluid,spring,bounce,glow,smooth';
 
   @override
   String get searchKwNotifyEnabled => 'notifications on,turn off notifications';

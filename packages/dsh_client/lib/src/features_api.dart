@@ -593,14 +593,14 @@ extension FeaturesApi on DshClient {
       onListen: () async {
         try {
           await mux.ready();
+          if (cancelled || out.isClosed) return;
+          final stream = mux.open(endpoint, args);
+          sub = stream.items.listen(out.add, onError: out.addError, onDone: out.close);
         } on Object catch (error) {
           if (!cancelled && !out.isClosed) out.addError(error);
           await out.close();
           return;
         }
-        if (cancelled || out.isClosed) return;
-        final stream = mux.open(endpoint, args);
-        sub = stream.items.listen(out.add, onError: out.addError, onDone: out.close);
       },
       onCancel: () async {
         cancelled = true;

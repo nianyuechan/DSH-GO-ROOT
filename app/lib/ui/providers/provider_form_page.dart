@@ -11,6 +11,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../l10n/l10n.dart';
 import '../../state/providers_state.dart';
+import '../common/app_dialog.dart';
 import '../common/app_sheet.dart';
 import '../common/discard_guard.dart';
 import '../common/sheet_title_bar.dart';
@@ -190,7 +191,7 @@ class _ProviderFormPageState extends ConsumerState<ProviderFormPage> {
   }
 
   Future<void> _addByHand() async {
-    final id = await showDialog<String>(
+    final id = await showAppDialog<String>(
       context: context,
       builder: (_) => _ManualModelDialog(taken: {for (final m in _models) m.id}),
     );

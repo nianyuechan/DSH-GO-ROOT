@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../l10n/l10n.dart';
-import '../common/pressable.dart';
 import '../common/ui_trace.dart';
 import '../common/side_insets.dart';
 import '../settings/index/spot_anchor.dart' show seekSpot;
@@ -184,6 +183,7 @@ class _AppPageState extends State<AppPage> {
             children: [
               CustomScrollView(
                 controller: _controller,
+                physics: AppMotion.scrollPhysics(context),
                 slivers: [
                   SliverToBoxAdapter(child: SizedBox(height: top)),
                   if (header != null)
@@ -192,8 +192,17 @@ class _AppPageState extends State<AppPage> {
                       sliver: SliverToBoxAdapter(
                         child: ValueListenableBuilder<double>(
                           valueListenable: _offset,
-                          builder: (context, offset, child) =>
-                              Opacity(opacity: _headerOpacity(offset), alwaysIncludeSemantics: true, child: child),
+                          // Pulled past the top (only the fluid tier's lists go there), the
+                          // headline swells a little with the pull.
+                          builder: (context, offset, child) => Opacity(
+                            opacity: _headerOpacity(offset),
+                            alwaysIncludeSemantics: true,
+                            child: Transform.scale(
+                              scale: 1 + (-offset / 900).clamp(0.0, 0.1),
+                              alignment: AlignmentDirectional.topStart,
+                              child: child,
+                            ),
+                          ),
                           child: KeyedSubtree(key: _headerKey, child: header),
                         ),
                       ),
@@ -308,7 +317,6 @@ class GlassIconButton extends StatelessWidget {
         ),
       ),
     );
-    button = Pressable(enabled: enabled, child: button);
     if (badge case final badge?) {
       button = Stack(
         clipBehavior: Clip.none,

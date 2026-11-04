@@ -120,7 +120,8 @@ export async function serveObject(request: Request, env: Env, ctx: Ctx, options:
   let object: R2ObjectBody | null;
   try {
     object = await env.BUCKET.get(key, range ? { range } : undefined);
-  } catch {
+  } catch (error) {
+    if (!range) throw error;
     const meta = await env.BUCKET.head(key);
     if (!meta) return plain(404, 'Not found');
     return plain(416, 'Range not satisfiable', { 'Content-Range': `bytes */${meta.size}` });

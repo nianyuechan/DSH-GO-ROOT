@@ -14,6 +14,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../l10n/l10n.dart';
 import '../../state/agents_state.dart';
 import '../../state/sessions_state.dart';
+import '../common/fluid_bits.dart';
 import '../common/status_dot.dart';
 import '../theme/app_icons.dart';
 import '../theme/theme.dart';
@@ -54,7 +55,10 @@ class HeaderTitleText extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final parent = ref.watch(_currentAgentsProvider)?.$2.parent;
     final shown = parent?.label ?? title;
-    return Text(shown, maxLines: 1, overflow: TextOverflow.ellipsis, style: style);
+    return FluidTextSwap(
+      value: shown,
+      child: Text(shown, maxLines: 1, overflow: TextOverflow.ellipsis, style: style),
+    );
   }
 }
 

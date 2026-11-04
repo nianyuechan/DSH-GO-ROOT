@@ -12,6 +12,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../l10n/l10n.dart';
 import '../../state/header_schedule_state.dart';
 import '../agents/header_agents.dart';
+import '../common/fluid_bits.dart';
 import '../common/smooth_size.dart';
 import '../common/status_dot.dart';
 import '../shell/adaptive/adaptive_scaffold.dart' show AdaptiveChrome;
@@ -610,6 +611,9 @@ class _StatusLabel extends StatelessWidget {
     liveRegion: true,
     label: status.spoken ?? status.label,
     excludeSemantics: true,
-    child: Text(status.label, maxLines: 1, overflow: TextOverflow.ellipsis, style: style),
+    child: FluidTextSwap(
+      value: status.label,
+      child: Text(status.label, maxLines: 1, overflow: TextOverflow.ellipsis, style: style),
+    ),
   );
 }

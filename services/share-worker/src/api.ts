@@ -146,7 +146,8 @@ export async function remove(request: Request, env: Env, id: string): Promise<Re
   const auth = request.headers.get('Authorization') ?? '';
   const bearer = /^Bearer\s+([A-Za-z0-9_-]{16,128})$/.exec(auth.trim())?.[1] ?? null;
   if (admin === null && bearer === null) return error(401, 'unauthorized');
-  if (admin === null && !(await burstAllowed(env.READ_LIMIT, clientKey(request)))) {
+  const adminAllowed = admin !== null && !!env.ADMIN_KEY && env.ADMIN_KEY.length >= 32 && (await sameSecret(admin, env.ADMIN_KEY));
+  if (!adminAllowed && !(await burstAllowed(env.READ_LIMIT, clientKey(request)))) {
     return error(429, 'rate_limited', { 'Retry-After': '60' });
   }
 
@@ -155,10 +156,8 @@ export async function remove(request: Request, env: Env, id: string): Promise<Re
   const object = await env.BUCKET.head(key);
   if (!object) return error(404, 'not_found');
 
-  let allowed = false;
-  if (admin !== null) {
-    allowed = !!env.ADMIN_KEY && env.ADMIN_KEY.length >= 32 && (await sameSecret(admin, env.ADMIN_KEY));
-  } else if (bearer !== null) {
+  let allowed = adminAllowed;
+  if (admin === null && bearer !== null) {
     const stored = object.customMetadata?.dt ?? '';
     allowed = stored.length === 64 && (await sameSecret(await sha256Hex(bearer), stored));
   }

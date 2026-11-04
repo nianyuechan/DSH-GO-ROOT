@@ -502,9 +502,19 @@ class DshConnection {
     Duration? timeout,
   }) async {
     HttpClientRequest? request;
+    StreamIterator<List<int>>? responseBody;
+    TimeoutException? expired;
     Future<DshHttpResponse> run() async {
       request = await _http.openUrl(method, uri);
       final req = request!;
+      final deadlineError = expired;
+      if (deadlineError != null) {
+        // openUrl can finish after the exchange deadline (for example, while
+        // queued for a connection). Own the aborted request without sending it.
+        unawaited(req.done.then<void>((_) {}, onError: (Object _, StackTrace _) {}));
+        req.abort(deadlineError);
+        throw deadlineError;
+      }
       req.followRedirects = followRedirects;
       _applyHost(req.headers);
       if (cookie != null) req.headers.set(HttpHeaders.cookieHeader, cookie!.header);
@@ -517,9 +527,12 @@ class DshConnection {
       final response = await req.close();
       final setCookies = response.headers[HttpHeaders.setCookieHeader] ?? const <String>[];
       final builder = BytesBuilder(copy: false);
-      await for (final chunk in response) {
+      final chunks = responseBody = StreamIterator(response);
+      while (await chunks.moveNext()) {
+        final chunk = chunks.current;
         if (maxResponseBytes != null && builder.length + chunk.length > maxResponseBytes) {
           request?.abort();
+          await chunks.cancel();
           throw DshProtocolException('$method ${uri.path}: response exceeds $maxResponseBytes bytes');
         }
         builder.add(chunk);
@@ -537,6 +550,10 @@ class DshConnection {
     try {
       return await run().timeout(timeout ?? requestTimeout);
     } on TimeoutException catch (error) {
+      expired = error;
+      // Once headers arrived, request.abort no longer owns the response body.
+      // Start cancellation without extending the caller's total deadline.
+      unawaited(responseBody?.cancel().catchError((Object _) {}));
       request?.abort(error);
       throw DshTransportException('$method ${uri.path} timed out', error);
     } on SocketException catch (error) {

@@ -33,7 +33,7 @@ import 'package:dsh_client/dsh_client.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart' show AsyncData;
+import 'package:flutter_riverpod/flutter_riverpod.dart' show AsyncData, ProviderScope;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:share_plus/share_plus.dart';
 
@@ -232,6 +232,31 @@ Future<void> _back(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
+// The undo checks need no image decoding or real-time settling.
+ChatState _undoFixture() {
+  final state = _fixture();
+  return ChatState(
+    items: [
+      for (final item in state.items)
+        if (item is UserChatItem)
+          UserChatItem(seq: item.seq, time: item.time, text: item.text, images: const [], files: item.files)
+        else
+          item,
+    ],
+    turns: state.turns,
+    commands: state.commands,
+    title: state.title,
+    loading: state.loading,
+  );
+}
+
+Future<void> _tapAndPump(WidgetTester tester, Finder finder) async {
+  await tester.ensureVisible(finder);
+  await tester.pumpAndSettle();
+  await tester.tap(finder);
+  await tester.pumpAndSettle();
+}
+
 ShareCard _card(WidgetTester tester) => tester.widget<ShareCard>(find.byType(ShareCard));
 
 String _summary(WidgetTester tester) => tester.widget<Text>(find.byKey(const ValueKey('share-summary'))).data!;
@@ -255,6 +280,7 @@ void _expectWhole(WidgetTester tester, String text) {
 }
 
 void main() {
+  _selectionTests();
   // ── Goldens ───────────────────────────────────────────────────────────────
 
   for (final brightness in Brightness.values) {
@@ -491,6 +517,94 @@ void main() {
     await _key(tester, 'share-to-link');
     expect(find.byKey(const ValueKey('share-link-copy')), findsOneWidget, reason: 'the same content, the same link');
     expect(find.text('我的分享链接'), findsOneWidget);
+  });
+
+  testWidgets('[link-undo] restoring unchanged settings keeps the original link', (tester) async {
+    final panel = await _open(tester, state: _undoFixture(), reply: 'a6');
+    try {
+      await _tapAndPump(tester, find.byKey(const ValueKey('share-to-link')));
+      await _tapAndPump(tester, find.byKey(const ValueKey('share-link-make')));
+      expect(panel.links.uploads, hasLength(1));
+      expect(find.byKey(const ValueKey('share-link-copy')), findsOneWidget);
+      await _tapAndPump(tester, find.byKey(const ValueKey('share-link-stop')));
+      await _tapAndPump(tester, find.byKey(const ValueKey('share-link-stop-confirm')));
+      expect(panel.links.revoked, ['a1B2c3D4e5']);
+      await _tapAndPump(tester, find.byKey(const ValueKey('share-link-restore')));
+      expect(panel.links.restored, ['a1B2c3D4e5']);
+      expect(panel.links.uploads, hasLength(1), reason: 'undo restores the old bytes, without uploading again');
+      expect(find.byKey(const ValueKey('share-link-copy')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    }
+  });
+
+  testWidgets('[link-undo] restored bytes do not acquire the new privacy selection', (tester) async {
+    final panel = await _open(tester, state: _undoFixture(), reply: 'a6');
+    try {
+      await _tapAndPump(tester, find.byKey(const ValueKey('share-to-link')));
+      await _tapAndPump(tester, find.byKey(const ValueKey('share-link-make')));
+      final uploaded = decodeConversationFile(utf8.decode(panel.links.uploads.single.$1));
+      expect(uploaded.share.entries.where((entry) => entry.type == 'tool'), isNotEmpty);
+      await _tapAndPump(tester, find.byKey(const ValueKey('share-link-stop')));
+      await _tapAndPump(tester, find.byKey(const ValueKey('share-link-stop-confirm')));
+      await _back(tester);
+      await _tapAndPump(tester, find.byKey(const ValueKey('share-toggle-工具调用')));
+      await _tapAndPump(tester, find.byKey(const ValueKey('share-to-link')));
+      final model = SharePanelScope.of(tester.element(find.byType(ShareLinkPage)));
+      expect(model.privacy.tools, isFalse);
+      expect(model.built!.share.entries.where((entry) => entry.type == 'tool'), isEmpty);
+      expect(find.byKey(const ValueKey('share-link-restore')), findsOneWidget);
+      await _tapAndPump(tester, find.byKey(const ValueKey('share-link-restore')));
+      expect(panel.links.restored, ['a1B2c3D4e5']);
+      expect(panel.links.uploads, hasLength(1), reason: 'undo did not publish the new tool-free content');
+      expect(find.byKey(const ValueKey('share-link-copy')), findsNothing);
+      expect(find.byKey(const ValueKey('share-link-make')), findsOneWidget);
+      await _back(tester);
+      await _tapAndPump(tester, find.byKey(const ValueKey('share-toggle-工具调用')));
+      await _tapAndPump(tester, find.byKey(const ValueKey('share-to-link')));
+      expect(
+        find.byKey(const ValueKey('share-link-copy')),
+        findsOneWidget,
+        reason: 'the old privacy still owns the restored link',
+      );
+      expect(tester.takeException(), isNull);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    }
+  });
+
+  testWidgets('[link-undo] restoring a month link does not make it permanent', (tester) async {
+    final panel = await _open(tester, state: _undoFixture(), reply: 'a6');
+    try {
+      await _tapAndPump(tester, find.byKey(const ValueKey('share-to-link')));
+      await _tapAndPump(tester, find.byKey(const ValueKey('share-link-make')));
+      expect(panel.links.uploads.single.$2, LinkExpiry.month);
+      await _tapAndPump(tester, find.byKey(const ValueKey('share-link-stop')));
+      await _tapAndPump(tester, find.byKey(const ValueKey('share-link-stop-confirm')));
+      await _tapAndPump(tester, find.text(LinkExpiry.forever.label));
+      expect(
+        tester.widget<SegmentedPill<LinkExpiry>>(find.byType(SegmentedPill<LinkExpiry>)).selected,
+        LinkExpiry.forever,
+      );
+      await _tapAndPump(tester, find.byKey(const ValueKey('share-link-restore')));
+      expect(panel.links.restored, ['a1B2c3D4e5']);
+      expect(panel.links.uploads, hasLength(1), reason: 'undo did not create a permanent upload');
+      expect(find.byKey(const ValueKey('share-link-copy')), findsNothing);
+      expect(find.byKey(const ValueKey('share-link-make')), findsOneWidget);
+      await _tapAndPump(tester, find.text(LinkExpiry.month.label));
+      expect(
+        find.byKey(const ValueKey('share-link-copy')),
+        findsOneWidget,
+        reason: 'returning to the original expiry reuses its link',
+      );
+      expect(tester.takeException(), isNull);
+    } finally {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    }
   });
 
   testWidgets('a failed upload says so; without a share host there is no 链接', (tester) async {
@@ -783,3 +897,127 @@ void main() {
     expect(find.byType(SharePanelHome), findsOneWidget);
   });
 }
+
+ChatState _selectionFixture() {
+  final source = _fixture();
+  return ChatState(
+    items: [
+      for (final item in source.items)
+        if (item is UserChatItem)
+          UserChatItem(seq: item.seq, time: item.time, text: item.text, images: const [], files: item.files)
+        else
+          item,
+    ],
+    turns: source.turns,
+    commands: source.commands,
+    title: source.title,
+    loading: false,
+  );
+}
+
+Future<void> _selectionTap(WidgetTester tester, Finder finder) async {
+  await tester.ensureVisible(finder);
+  await tester.pumpAndSettle();
+  await tester.tap(finder);
+  await tester.pumpAndSettle();
+}
+
+void _selectionTests() {
+  for (final append in [false, true]) {
+    testWidgets(
+      '[share-new-selection] explicitly selected reply is exported after initial preparation: append=$append',
+      (tester) async {
+        final initial = _selectionFixture();
+        await _open(tester, state: initial, reply: null);
+        try {
+          final home = tester.element(find.byType(SharePanelHome));
+          final container = ProviderScope.containerOf(home, listen: false);
+          final controller = container.read(chatProvider('s1').notifier) as _Chat;
+          final model = SharePanelScope.of(home);
+          expect(model.scope, ShareScope.whole);
+          await _selectionTap(tester, find.byKey(const ValueKey('share-to-file')));
+          final first = await model.prepare();
+          expect(first.share.entries.whereType<ReplyEntry>().map((e) => e.text), contains(_reply(initial, 'a15').text));
+          await _selectionTap(tester, find.byTooltip('返回'));
+
+          final addedPrompt = UserChatItem(
+            seq: 19,
+            time: at(150100),
+            text: '请补充本轮验收结论',
+            images: const [],
+            files: const [],
+          );
+          final addedReply = AssistantChatItem(
+            id: 'a20',
+            seq: 20,
+            time: at(151000),
+            text: '新增验收结论：第三轮已完整核对。',
+            reasoning: '',
+            model: 'deepseek-v4-pro',
+          );
+          if (append) {
+            controller.emit(
+              ChatState(
+                items: [...initial.items, addedPrompt, addedReply],
+                turns: [
+                  ...initial.turns,
+                  TurnTrace(
+                    turn: 3,
+                    startSeq: 18,
+                    start: at(150000),
+                    endSeq: 21,
+                    end: at(151100),
+                    endReason: const TurnEndReason('completed'),
+                    spans: [_selectionModelSpan()],
+                  ),
+                ],
+                commands: initial.commands,
+                title: initial.title,
+                loading: false,
+              ),
+            );
+            await tester.pump();
+            expect(model.shareable.map((i) => i.key), contains(addedReply.key));
+            expect(model.card!.blocks.whereType<ShareAnswer>().map((b) => b.markdown), contains(addedReply.text));
+            expect(first.share.entries.whereType<ReplyEntry>().map((e) => e.text), isNot(contains(addedReply.text)));
+          }
+          final target = append ? addedReply : _reply(initial, 'a15');
+          final prompt = append ? addedPrompt : initial.items.whereType<UserChatItem>().last;
+          await _selectionTap(tester, find.text('选中消息'));
+          final picker = tester.widget<MessagePicker>(find.byType(MessagePicker));
+          expect(picker.items.map((i) => i.key), contains(target.key));
+          expect(picker.selected, {prompt.key, target.key});
+          final promptRow = find.byWidgetPredicate((w) => w is MessagePickRow && w.item.key == prompt.key);
+          await _selectionTap(tester, promptRow);
+          final targetRow = tester.widget<MessagePickRow>(
+            find.byWidgetPredicate((w) => w is MessagePickRow && w.item.key == target.key),
+          );
+          expect(targetRow.picked, isTrue);
+          await _selectionTap(tester, find.text('完成（1）'));
+          expect(model.keys, {target.key});
+          expect(model.scope, ShareScope.picked);
+          expect(model.card!.blocks.whereType<ShareAnswer>().map((b) => b.markdown), [target.text]);
+          await _selectionTap(tester, find.byKey(const ValueKey('share-to-file')));
+          final selected = await model.prepare();
+          final decoded = decodeConversationFile(selected.file.text);
+          expect(selected.share.entries.whereType<ReplyEntry>().map((e) => e.text), [target.text]);
+          expect(decoded.share.entries.whereType<ReplyEntry>().map((e) => e.text), [target.text]);
+          expect(tester.takeException(), isNull);
+        } finally {
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.pump();
+        }
+      },
+    );
+  }
+}
+
+TraceSpan _selectionModelSpan() => TraceSpan(
+  kind: TraceKind.model,
+  step: 1,
+  seq: 20,
+  start: at(150200),
+  firstToken: at(150300),
+  lastToken: at(151000),
+  end: at(151000),
+);

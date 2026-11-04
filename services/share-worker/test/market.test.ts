@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import worker from '../src/index';
 import { packageFromPath, validateCatalog } from '../src/market';
 import { makeEnv, makeCtx } from './fakes';
@@ -37,6 +37,10 @@ function upstream(data = docs()) {
       Response.json(String(input).endsWith('index.json') ? data.index : data.sidecar),
     );
 }
+// A request and its freshness assertion share one reference time.
+beforeEach(() => {
+  vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-30T04:00:00Z'));
+});
 afterEach(() => {
   vi.restoreAllMocks();
   vi.useRealTimers();

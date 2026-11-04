@@ -17,6 +17,7 @@ import 'models.dart';
 import 'mux.dart';
 import 'rpc.dart';
 import 'rpc_envelope.dart';
+import 'workspace_upload.dart';
 
 /// `queue` waits for the next turn; `steer` injects into the running turn's
 /// next step.
@@ -295,6 +296,21 @@ class DshClient {
   /// Whether [endpoint] is reachable through this client's carrier (remote
   /// tunnels serve a fixed allow-list; `fileUploads/upload` is not on it).
   bool supportsEndpoint(String endpoint) => carrier.allowsEndpoint(endpoint);
+
+  /// Receipt staging or the current connection's workspace upload protocol.
+  bool get supportsFileUpload =>
+      supportsEndpoint('fileUploads/upload') ||
+      (carrier is WorkspaceUploadCarrier && (carrier as WorkspaceUploadCarrier).supportsWorkspaceUpload);
+
+  /// Publishes a file into this session's workspace, without a receipt.
+  /// The returned relative path must be included in the prompt instead.
+  Future<WorkspaceUploadedFile> uploadWorkspaceFile(String sessionId, List<int> bytes, {required String name}) {
+    final transport = carrier is WorkspaceUploadCarrier ? carrier as WorkspaceUploadCarrier : null;
+    if (transport == null || !transport.supportsWorkspaceUpload) {
+      throw const DshRemoteException('WORKSPACE_UPLOAD_UNSUPPORTED', 'This Host does not support workspace uploads.');
+    }
+    return transport.uploadWorkspaceFile(sessionId, bytes, name: name);
+  }
 
   /// All `$events` items (session added/status/error, approvals, ...).
   Stream<HostEvent> get hostEvents => mux.hostEvents;
@@ -786,9 +802,16 @@ class DshClient {
       executeCommand(sessionId, '/permission $preset');
 
   /// `commands/execute` (slash commands as typed in the composer).
+  /// Compaction waits for model generation; its request owns the cancellation
+  /// signal, so the ordinary HTTP deadline would cancel a healthy compaction.
   Future<CommandResult> executeCommand(String sessionId, String line) async {
+    final compact = RegExp(r'^/compact(?:\s|$)').hasMatch(line.trim());
     final value = asMap(
-      await rpc.call('commands/execute', {'agentId': sessionId, 'line': line, 'submittedAttachments': <Object?>[]}),
+      await rpc.call('commands/execute', {
+        'agentId': sessionId,
+        'line': line,
+        'submittedAttachments': <Object?>[],
+      }, compact ? const Duration(minutes: 30) : null),
     );
     final result = asMapOrEmpty(value?['result']);
     return CommandResult(asString(value?['commandId']), result['kind'] == 'success', asString(result['text']));
@@ -873,9 +896,9 @@ class DshClient {
           break;
         }
         if (stopped) break;
-        final stream = mux.open(endpoint, args);
-        current = stream;
         try {
+          final stream = mux.open(endpoint, args);
+          current = stream;
           await for (final item in stream.items) {
             if (stopped) break;
             controller.add(parse(item));
@@ -1057,6 +1080,9 @@ class _SessionWatch {
   /// Waits for the next ready generation (a new login); false once the client
   /// closes or the watch stops.
   Future<bool> _nextGeneration() async {
+    // History may reject after a successor's non-replay ready event was sent.
+    final current = client.mux.generation;
+    if (current != null && !identical(current, _epochGeneration)) return !_stopped;
     final wake = _wake = Completer<bool>();
     void done(bool ready) {
       if (!wake.isCompleted) wake.complete(ready);
@@ -1104,9 +1130,10 @@ class _SessionWatch {
         break;
       }
       if (_stopped) break;
-      final stream = client.mux.open('session/follow', {'request': _followRequest()});
-      _current = stream;
+      MuxStream? stream;
       try {
+        stream = client.mux.open('session/follow', {'request': _followRequest()});
+        _current = stream;
         var opened = false;
         await for (final item in stream.items) {
           if (_stopped) break;
@@ -1142,7 +1169,7 @@ class _SessionWatch {
       } on _Resync catch (error) {
         epoch.retire();
         _emit(SessionSyncEvent(epoch));
-        await stream.cancel();
+        await stream?.cancel();
         if (_stopped) break;
         // Back-to-back resyncs back off; six without a clean frame end the watch.
         if (++_resyncs >= 6) {
@@ -1153,7 +1180,7 @@ class _SessionWatch {
       } on Object catch (error) {
         epoch.retire();
         _emit(SessionSyncEvent(epoch));
-        await stream.cancel();
+        await stream?.cancel();
         if (_stopped) break;
         // A subagent child opened without its parent route: route it, retry.
         if (await client.adoptSubagentRoute(sessionId, error)) continue;
@@ -1233,10 +1260,11 @@ class _SessionWatch {
       final page = await client.history(sessionId, throughSeq: through, beforeSeq: beforeSeq, maxMessages: 500);
       final usable = page.events.where((e) => e.seq >= from && e.seq < beforeSeq).toList();
       if (usable.isEmpty) break;
-      out.insertAll(0, usable);
+      // Reverse each page now, then the whole result, without shifting the accumulated prefix.
+      out.addAll(usable.reversed);
       beforeSeq = usable.first.seq;
       if (!page.hasMore) break;
     }
-    return out;
+    return out.reversed.toList();
   }
 }
