@@ -242,6 +242,12 @@ object PhoneRegistry {
     @Volatile var mainDriver: PhoneDriver? = null
     @Volatile var backgroundDriver: PhoneDriver? = null
 
+    /** Registered by the native overlay; background actions ask for a coalesced preview refresh. */
+    @Volatile var previewRefresh: (() -> Unit)? = null
+
+    /** The preview's application or display changed: clear the old frame and invalidate in-flight work. */
+    @Volatile var previewSourceChanged: (() -> Unit)? = null
+
     /** Overlay gate when the accessibility service runs, else the notification gate. */
     @Volatile var overlayGate: UserGate? = null
     @Volatile var notificationGate: UserGate? = null

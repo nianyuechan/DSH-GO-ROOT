@@ -77,6 +77,7 @@ class PhoneA11yService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         clock.tick(event?.packageName)
+        overlay?.onAccessibilityEvent(event?.packageName?.toString())
     }
 
     /**

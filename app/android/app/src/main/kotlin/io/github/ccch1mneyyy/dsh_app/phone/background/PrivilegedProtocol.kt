@@ -71,6 +71,8 @@ object Proto {
     const val PORTRAIT = "portrait"
     const val KEYBOARD_UP = "keyboardUp"
     const val IMAGE_OMITTED = "imageOmitted"
+    const val IMAGE_WIDTH = "imageWidth"
+    const val IMAGE_HEIGHT = "imageHeight"
     const val APP_LABEL = "appLabel"
     const val FG_PKG = "foregroundPkg"
     const val ACCEPTED = "accepted"

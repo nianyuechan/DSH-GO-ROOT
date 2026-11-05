@@ -102,6 +102,28 @@ internal class MainScreenDriver(private val service: PhoneA11yService, private v
 
     override fun foregroundPackage(): String? = TreeCapture.foregroundPackage(service, screenBox())
 
+    /** A clean preview frame: no snapshot id, element fingerprints or model observation are touched. */
+    fun preview(): Shot = synchronized(lock) {
+        availability().let {
+            if (!it.ok) return Shot(null, null, null, false, "preview unavailable", repeatable = false)
+        }
+        val cap = capture()
+        try {
+            if (cap.ownAppInFront && !lifted.ownApp)
+                return Shot(null, null, null, false, "own app", repeatable = false)
+            if (ScreenFormat.index(cap.windows).any { it.fullText.contains("«银行卡") || it.fullText.contains("«身份证") })
+                return Shot(null, null, null, true, "sensitive document", repeatable = false)
+            val window = if (cap.windows.size == 1) cap.windows[0] else null
+            val secrets = ScreenShooter.sensitiveBounds(cap.windows)
+            // No element numbers on the human preview; sensitive masks are exactly the model screenshot's.
+            return shooter.shoot(window, cap.screen, emptyList(), secrets, 1_200).also {
+                it.sourceKey = cap.packageName?.let { pkg -> "main:$pkg" }
+            }
+        } finally {
+            cap.recycle()
+        }
+    }
+
     override fun observe(detail: Boolean, image: Boolean): ScreenSnapshot = synchronized(lock) {
         val start = SystemClock.uptimeMillis()
         availability().let { if (!it.ok) return blank(it.reason!!) }

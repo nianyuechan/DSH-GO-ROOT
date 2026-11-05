@@ -14,6 +14,7 @@
     <string name="overlay_fold">Shrink to a ball</string>
     <string name="overlay_fold_row">Shrink to a ball</string>
     <string name="overlay_hold_hint">Hold the ball for a second to stop</string>
+    <string name="overlay_preview_unavailable">Preview unavailable</string>
     <string name="overlay_stop_description">Stop DSH’s actions</string>
     <string name="overlay_paused_short">Paused</string>
     <string name="overlay_waiting">Waiting for you below</string>

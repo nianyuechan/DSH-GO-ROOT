@@ -58,9 +58,11 @@ import io.github.ccch1mneyyy.dsh_app.phone.PhonePromptPresenter
 import io.github.ccch1mneyyy.dsh_app.phone.PhonePromptUi
 import io.github.ccch1mneyyy.dsh_app.phone.PromptPresentation
 import io.github.ccch1mneyyy.dsh_app.phone.MainThreadCall
+import io.github.ccch1mneyyy.dsh_app.phone.background.BackgroundDisplay
 import io.github.ccch1mneyyy.dsh_app.pet.SafeArea
 import io.github.ccch1mneyyy.dsh_app.pet.WindowPos
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
@@ -128,6 +130,19 @@ internal class ControlOverlay(private val service: AccessibilityService) : UserG
     private val fold = FoldClock()
     private var ball: OverlayBall? = null
 
+    private val previewExecutor = Executors.newSingleThreadExecutor { r -> Thread(r, "dsh-overlay-preview") }
+    private val previewTasks = object : PreviewTasks {
+        override fun post(task: Runnable) { main.post(task) }
+        override fun postDelayed(task: Runnable, delayMs: Long) { main.postDelayed(task, delayMs) }
+        override fun cancel(task: Runnable) { main.removeCallbacks(task) }
+        override fun execute(task: Runnable) { previewExecutor.execute(task) }
+    }
+    private val previewLoop = PreviewLoop(::capturePreview, { shot -> pill?.showPreview(shot) }, previewTasks)
+    private var previewRequested = false
+    private var previewPackage: String? = null
+    private val previewRefreshCallback = { refreshPreview() }
+    private val previewSourceChangedCallback = { invalidatePreview() }
+
     /** What is on screen: the capsule (or card), or the ball (lags [fold] while a fold or unfold plays). */
     private var ballShown = false
     private val foldTick = Runnable { onFoldTick() }
@@ -145,6 +160,8 @@ internal class ControlOverlay(private val service: AccessibilityService) : UserG
     init {
         fold.setAutoFold(OverlayPrefs.from(overlayPrefs).autoFold, SystemClock.uptimeMillis())
         overlayPrefs.registerOnSharedPreferenceChangeListener(prefsListener)
+        PhoneRegistry.previewRefresh = previewRefreshCallback
+        PhoneRegistry.previewSourceChanged = previewSourceChangedCallback
     }
 
     private class Pending<T : Any> {
@@ -285,6 +302,47 @@ internal class ControlOverlay(private val service: AccessibilityService) : UserG
         if (hide && changed) SystemClock.sleep(120)
     }
 
+    /** Immediate feedback once the system accepts an action; static frames are not recaptured. */
+    fun acceptedTap(x: Int, y: Int) {
+        main.post {
+            val p = pill ?: return@post
+            if (!previewRequested || !fold.expanded || ballShown) return@post
+            p.previewTap(x, y)
+            previewLoop.refresh()
+        }
+    }
+
+    private fun refreshPreview() {
+        main.post { if (previewRequested) previewLoop.refresh() }
+    }
+
+    private fun invalidatePreview() {
+        main.post {
+            if (!previewRequested) return@post
+            pill?.releasePreview()
+            previewLoop.invalidate()
+        }
+    }
+
+    fun onAccessibilityEvent(packageName: String?) {
+        main.post {
+            if (packageName == null || packageName == previewPackage) return@post
+            previewPackage = packageName
+            if (!previewRequested) return@post
+            pill?.releasePreview()
+            previewLoop.invalidate()
+        }
+    }
+
+    private fun capturePreview(): Shot {
+        PhoneRegistry.backgroundDriver?.let {
+            return (it as? BackgroundDisplay)?.preview()
+                ?: Shot(null, null, null, false, "preview unavailable", repeatable = false)
+        }
+        return (PhoneRegistry.mainDriver as? MainScreenDriver)?.preview()
+            ?: Shot(null, null, null, false, "preview unavailable", repeatable = false)
+    }
+
     /** Screen off, lock, 停止 elsewhere, service going away: answer everything pending with STOP. */
     fun stopAll() {
         val shared = sharedPrompt
@@ -384,6 +442,10 @@ internal class ControlOverlay(private val service: AccessibilityService) : UserG
             dismissConfirm()
             dismissHandoff()
             removePill(animated = false)
+            previewLoop.stop()
+            if (PhoneRegistry.previewRefresh === previewRefreshCallback) PhoneRegistry.previewRefresh = null
+            if (PhoneRegistry.previewSourceChanged === previewSourceChangedCallback) PhoneRegistry.previewSourceChanged = null
+            previewExecutor.shutdownNow()
         }
     }
 
@@ -460,6 +522,21 @@ internal class ControlOverlay(private val service: AccessibilityService) : UserG
             badge = u.any && !stoppedNote,
             stopLabel = if (stoppedNote) null else s(R.string.overlay_stop_description),
         )
+        syncPreview()
+    }
+
+    private fun syncPreview() {
+        val show = pill != null && fold.expanded && !ballShown && !stoppedNote && !waiting() && handoffCard == null
+        if (show == previewRequested) return
+        previewRequested = show
+        if (show) {
+            holdFold(FoldClock.Hold.PREVIEW)
+            previewLoop.start()
+        } else {
+            previewLoop.stop()
+            pill?.releasePreview()
+            releaseFold(FoldClock.Hold.PREVIEW)
+        }
     }
 
     /** 「已解除限制」 in bold over what is lifted (「系统设置、密码和验证码」), a size smaller. */
@@ -491,6 +568,7 @@ internal class ControlOverlay(private val service: AccessibilityService) : UserG
         ball = null
         ballShown = false
         steerNote = null
+        syncPreview()
         p.cancelMorph()
         val roots = listOfNotNull(p.root.takeIf { it.isShown }, b?.root?.takeIf { it.isShown })
         if (!animated || !animationsOn() || roots.isEmpty()) {
@@ -515,6 +593,7 @@ internal class ControlOverlay(private val service: AccessibilityService) : UserG
             stop = s(R.string.overlay_stop_description), steerHint = s(R.string.overlay_steer_hint), send = s(R.string.overlay_send),
             unlocksDescription = s(R.string.overlay_unlocked_description), review = s(R.string.overlay_unlocks_review),
             foldRow = s(R.string.overlay_fold_row), holdHint = s(R.string.overlay_hold_hint),
+            previewUnavailable = s(R.string.overlay_preview_unavailable),
         )
         lateinit var capsule: OverlayCapsule
         val actions = object : OverlayCapsule.Actions {
@@ -593,6 +672,7 @@ internal class ControlOverlay(private val service: AccessibilityService) : UserG
             renderPill(animated = false)
             p.expand(animationsOn())
         }
+        syncPreview()
         scheduleFold()
     }
 
@@ -936,6 +1016,7 @@ internal class ControlOverlay(private val service: AccessibilityService) : UserG
             FoldClock.Tick.DIM -> applyIdle(animated = true)
             FoldClock.Tick.NONE -> Unit
         }
+        syncPreview()
         scheduleFold()
     }
 
@@ -966,6 +1047,7 @@ internal class ControlOverlay(private val service: AccessibilityService) : UserG
     private fun collapseByHand() {
         endEditing()
         if (fold.foldByHand(now())) foldPill(animationsOn())
+        syncPreview()
         scheduleFold()
     }
 
@@ -992,6 +1074,7 @@ internal class ControlOverlay(private val service: AccessibilityService) : UserG
             }
             FoldClock.Form.CARD -> if (!ballShown && p.shape != OverlayCapsule.Shape.CARD) p.expand(animated)
         }
+        syncPreview()
     }
 
     private fun onPrefsChanged() {

@@ -29,6 +29,7 @@ import android.view.inputmethod.EditorInfo
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import io.github.ccch1mneyyy.dsh_app.pet.Side
 import kotlin.math.roundToInt
@@ -75,7 +76,7 @@ internal class OverlayCapsule(
         val pause: String, val resume: String, val stop: String,
         val steerHint: String, val send: String,
         val unlocksDescription: String, val review: String,
-        val foldRow: String, val holdHint: String,
+        val foldRow: String, val holdHint: String, val previewUnavailable: String,
     )
 
     interface Actions {
@@ -322,7 +323,6 @@ internal class OverlayCapsule(
         orientation = LinearLayout.VERTICAL
         setWillNotDraw(false)
         setPadding(0, 0, 0, ctx.dp(8))
-        visibility = View.GONE
         addView(meta)
         stepRows.forEach { addView(it) }
         val m = ctx.dp(BODY_INSET_DP)
@@ -352,9 +352,22 @@ internal class OverlayCapsule(
         }
     }
 
+    private val preview = OverlayPreview(ctx, ctx.resources.displayMetrics.density, c, strings.previewUnavailable)
+
+    private val bodyScroll = ScrollView(ctx).apply {
+        isFillViewport = true
+        addView(body, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
+    }
+
+    private val cardContent = LinearLayout(ctx).apply {
+        visibility = View.GONE
+        addView(preview)
+        addView(bodyScroll)
+    }
+
     // ---- window ---------------------------------------------------------------------------------------
 
-    val surface = OverlaySurface(ctx, c, header, body)
+    val surface = OverlaySurface(ctx, c, header, cardContent)
 
     /**
      * The whole capsule's opacity: the 闲置时不透明度 when idle, full otherwise. On [surface], so the
@@ -396,14 +409,25 @@ internal class OverlayCapsule(
     /** A new screen size (first placement, rotation): widths again, at once. */
     fun place(screenW: Int, screenH: Int) {
         this.screenW = screenW
-        screenHdp = screenH / ctx.resources.displayMetrics.density
-        cardW = CapsuleMetrics.maxPx(screenW, ctx.resources.displayMetrics.density)
+        val density = ctx.resources.displayMetrics.density
+        screenHdp = screenH / density
+        val expanded = CapsuleMetrics.expandedCard(screenW, screenH, density)
+        cardW = expanded.width
+        cardContent.orientation = if (expanded.sideBySide) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+        preview.layoutParams = LinearLayout.LayoutParams(expanded.previewWidth, expanded.previewHeight)
+        bodyScroll.layoutParams = LinearLayout.LayoutParams(expanded.bodyWidth, expanded.bodyHeight)
         surface.cardW = cardW
         cancelMorph()
         width.reset()
         state?.let { width.force(wantedWidth(it)) }
         settle(shape)
     }
+
+    fun showPreview(shot: Shot) = preview.show(shot)
+
+    fun previewTap(screenX: Int, screenY: Int) = preview.showTap(screenX, screenY)
+
+    fun releasePreview() = preview.release()
 
     /** Shows [s]; [animated] cross-fades the line and lets the capsule follow its width. */
     fun render(s: CapsuleState, animated: Boolean, now: Long) {
@@ -512,17 +536,17 @@ internal class OverlayCapsule(
         val capW = width.width.takeIf { it > 0 } ?: cardW
         when (to) {
             Shape.CAPSULE -> {
-                body.visibility = View.GONE
-                body.alpha = 0f
-                body.translationY = 0f
+                cardContent.visibility = View.GONE
+                cardContent.alpha = 0f
+                cardContent.translationY = 0f
                 chevron.turn = 0f
                 surface.setExtent(capW, headerH)
                 surface.setRect(0f, 0f, capW.toFloat(), headerH.toFloat())
             }
             Shape.CARD -> {
-                body.visibility = View.VISIBLE
-                body.alpha = 1f
-                body.translationY = 0f
+                cardContent.visibility = View.VISIBLE
+                cardContent.alpha = 1f
+                cardContent.translationY = 0f
                 chevron.turn = 180f
                 val h = surface.cardHeight()
                 surface.setExtent(cardW, h)
@@ -545,12 +569,12 @@ internal class OverlayCapsule(
         val from = steadyRectInCard()
         morph?.let { it.cancel(); morph = null }
         // From a collapse cut short, carry on from where the body and the chevron are.
-        val wasOpen = body.visibility == View.VISIBLE
-        val startAlpha = if (wasOpen) body.alpha else 0f
+        val wasOpen = cardContent.visibility == View.VISIBLE
+        val startAlpha = if (wasOpen) cardContent.alpha else 0f
         val startTurn = if (wasOpen) chevron.turn else 0f
         shape = Shape.CARD
-        body.alpha = startAlpha
-        body.visibility = View.VISIBLE
+        cardContent.alpha = startAlpha
+        cardContent.visibility = View.VISIBLE
         val h = surface.cardHeight()
         val start = if (wasOpen && surface.extentW == cardW) RectF(surface.rect) else from
         surface.setExtent(cardW, h)
@@ -559,8 +583,8 @@ internal class OverlayCapsule(
         val shift = ctx.dpf(-6f)
         animate(RectF(0f, 0f, cardW.toFloat(), h.toFloat()), OverlayMotion.MORPH_MS, OverlayMotion.emphasized, animated, frame = { t ->
             val k = ((t - 0.3f) / 0.7f).coerceIn(0f, 1f)
-            body.alpha = startAlpha + (1f - startAlpha) * k
-            body.translationY = shift * (1f - k) * (1f - startAlpha)
+            cardContent.alpha = startAlpha + (1f - startAlpha) * k
+            cardContent.translationY = shift * (1f - k) * (1f - startAlpha)
             chevron.turn = startTurn + (180f - startTurn) * t
         }) { settle(Shape.CARD); then() }
     }
@@ -571,9 +595,9 @@ internal class OverlayCapsule(
         morph?.let { it.cancel(); morph = null }
         val capW = width.width.takeIf { it > 0 } ?: cardW
         val left = (surface.extentW - capW) / 2f
-        val startAlpha = body.alpha
+        val startAlpha = cardContent.alpha
         animate(RectF(left, 0f, left + capW, headerH.toFloat()), OverlayMotion.MORPH_MS, OverlayMotion.emphasized, animated, frame = { t ->
-            body.alpha = startAlpha * (1f - t / 0.4f).coerceIn(0f, 1f)
+            cardContent.alpha = startAlpha * (1f - t / 0.4f).coerceIn(0f, 1f)
             chevron.turn = 180f * (1f - t)
         }) { settle(Shape.CAPSULE); then() }
     }
@@ -625,10 +649,10 @@ internal class OverlayCapsule(
         val r = RectF(surface.rect)
         surface.pin(RectF(r.left, r.top, r.right, r.top + headerH))
         val left = BallGeometry.circleLeft(r.left.roundToInt(), r.right.roundToInt(), ball, side).toFloat()
-        val bodyAlpha = body.alpha
+        val bodyAlpha = cardContent.alpha
         animate(RectF(left, r.top, left + ball, r.top + headerH), OverlayMotion.MORPH_MS, OverlayMotion.emphasized, animated, frame = { t ->
             header.alpha = (1f - t / 0.4f).coerceIn(0f, 1f)
-            body.alpha = bodyAlpha * (1f - t / 0.3f).coerceIn(0f, 1f)
+            cardContent.alpha = bodyAlpha * (1f - t / 0.3f).coerceIn(0f, 1f)
         }) { then() }
     }
 

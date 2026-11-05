@@ -45,7 +45,10 @@ internal class Actuator(private val service: AccessibilityService, private val o
     fun click(node: AccessibilityNodeInfo, bounds: Box, screen: Box, long: Boolean): Outcome {
         val action = if (long) AccessibilityNodeInfo.ACTION_LONG_CLICK else AccessibilityNodeInfo.ACTION_CLICK
         fun able(n: AccessibilityNodeInfo) = n.isEnabled && if (long) n.isLongClickable else n.isClickable
-        if (able(node) && node.performAction(action)) return Outcome(true, Via.NODE)
+        if (able(node) && node.performAction(action)) {
+            visiblePoint(bounds, screen)?.let { overlay.acceptedTap(it.first, it.second) }
+            return Outcome(true, Via.NODE)
+        }
         // A text inside a clickable row: a finger there would hit the row.
         val rect = Rect()
         var parent: AccessibilityNodeInfo? = node.parent
@@ -53,7 +56,12 @@ internal class Actuator(private val service: AccessibilityService, private val o
         while (parent != null && depth < 4) {
             parent.getBoundsInScreen(rect)
             if (able(parent) && rect.contains(bounds.centerX, bounds.centerY)) {
-                if (parent.performAction(action)) return Outcome(true, Via.ANCESTOR)
+                if (parent.performAction(action)) {
+                    visiblePoint(Box(rect.left, rect.top, rect.right, rect.bottom), screen)?.let {
+                        overlay.acceptedTap(it.first, it.second)
+                    }
+                    return Outcome(true, Via.ANCESTOR)
+                }
                 break
             }
             parent = parent.parent
@@ -74,7 +82,10 @@ internal class Actuator(private val service: AccessibilityService, private val o
     fun tap(x: Int, y: Int, long: Boolean = false): Boolean {
         val path = Path().apply { moveTo(x.toFloat(), y.toFloat()) }
         val duration = if (long) ViewConfiguration.getLongPressTimeout().toLong() + 300 else 60L
-        return gesture(GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, duration)).build(), duration)
+        return gesture(
+            GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, duration)).build(),
+            duration,
+        ) { overlay.acceptedTap(x, y) }
     }
 
     fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Long = 350): Boolean {
@@ -87,7 +98,7 @@ internal class Actuator(private val service: AccessibilityService, private val o
      * stroke reaches the app underneath, never the overlay; InjectGuard covers the
      * time it is in flight.
      */
-    fun gesture(description: GestureDescription, durationMs: Long): Boolean {
+    fun gesture(description: GestureDescription, durationMs: Long, onAccepted: () -> Unit = {}): Boolean {
         overlay.setPassThrough(true)
         try {
             InjectGuard.mark(durationMs)
@@ -98,6 +109,7 @@ internal class Actuator(private val service: AccessibilityService, private val o
                 override fun onCancelled(gestureDescription: GestureDescription?) { latch.countDown() }
             }, gestureHandler)
             if (!sent) return false
+            onAccepted()
             latch.await(durationMs + 2_000, TimeUnit.MILLISECONDS)
             return completed
         } finally {

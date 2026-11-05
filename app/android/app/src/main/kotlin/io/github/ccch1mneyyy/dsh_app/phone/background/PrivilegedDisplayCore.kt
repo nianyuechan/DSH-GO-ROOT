@@ -291,6 +291,8 @@ class PrivilegedDisplayCore(private val context: Context) {
         val id = displayId()
         response.putInt(Proto.DISPLAY_ID, id)
         response.putString(Proto.FG_PKG, pkg)
+        response.putInt(Proto.IMAGE_WIDTH, width)
+        response.putInt(Proto.IMAGE_HEIGHT, height)
         response.putBoolean(Proto.PORTRAIT, height >= width)
         val shot = runCatching { capture() }.getOrNull()
         var secure = shot?.black == true

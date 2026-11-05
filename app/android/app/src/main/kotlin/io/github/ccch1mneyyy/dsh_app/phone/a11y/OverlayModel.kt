@@ -90,6 +90,17 @@ internal enum class Slot { MARK, LINE, PAUSE, STOP }
  * Sizes of the control, in dp. One radius for every form: the capsule's ends, the card's corners
  * and the ball are the same 24 dp curve, so a morph never re-bends a corner.
  */
+internal data class ExpandedCardLayout(
+    val sideBySide: Boolean,
+    val width: Int,
+    val previewWidth: Int,
+    val bodyWidth: Int,
+    val previewHeight: Int,
+    val bodyHeight: Int,
+) {
+    val contentHeight: Int = if (sideBySide) previewHeight else previewHeight + bodyHeight
+}
+
 internal object CapsuleMetrics {
     /** Capsule height, ball diameter, card header. */
     const val HEIGHT_DP = 48
@@ -146,6 +157,23 @@ internal object CapsuleMetrics {
         val step = STEP_DP * density
         val stepped = (ceil(contentPx / step) * step).roundToInt()
         return stepped.coerceIn((MIN_DP * density).roundToInt(), maxPx(screenW, density))
+    }
+
+    /** Expanded card: 45:55 on a wide screen, preview above the original body on a narrow one. */
+    fun expandedCard(screenW: Int, screenH: Int, density: Float): ExpandedCardLayout {
+        val availableW = maxOf(0, screenW - (2 * EDGE_DP * density).roundToInt())
+        val width = minOf(availableW, (720 * density).roundToInt())
+        val sideBySide = availableW >= (560 * density).roundToInt()
+        val previewWidth = if (sideBySide) (width * 0.45f).toInt() else width
+        val bodyWidth = width - if (sideBySide) previewWidth else 0
+        val availableH = maxOf(1, (screenH * 0.55f).toInt())
+        if (sideBySide) {
+            val height = minOf((320 * density).roundToInt(), availableH)
+            return ExpandedCardLayout(true, width, previewWidth, bodyWidth, height, height)
+        }
+        val previewHeight = minOf((180 * density).roundToInt(), maxOf(1, availableH * 2 / 5))
+        val bodyHeight = minOf((260 * density).roundToInt(), maxOf(1, availableH - previewHeight))
+        return ExpandedCardLayout(false, width, width, width, previewHeight, bodyHeight)
     }
 
     /** How many past steps the card lists: one on a short screen (landscape), else three. */

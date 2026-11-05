@@ -25,7 +25,7 @@ import java.util.EnumSet
 class FoldClock(val dimMs: Long = DIM_MS, val foldMs: Long = FOLD_MS, val cardMs: Long = CARD_MS) {
     enum class Form { BALL, CAPSULE, CARD }
 
-    enum class Hold { CONFIRM, HANDOFF, EDITING, STOPPED }
+    enum class Hold { CONFIRM, HANDOFF, EDITING, STOPPED, PREVIEW }
 
     enum class Tick { NONE, DIM, FOLD, COLLAPSE }
 

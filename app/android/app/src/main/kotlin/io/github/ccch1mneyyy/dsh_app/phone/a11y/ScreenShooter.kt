@@ -35,6 +35,10 @@ internal class Shot(
     val bytes: ByteArray?, val mime: String?, val geometry: ImageGeometry?, val secure: Boolean, val error: String?,
     /** When the system took the frame (device clock, ms), from [AccessibilityService.ScreenshotResult.getTimestamp]. */
     val takenAtMillis: Long? = null,
+    /** False when another capture would have to hide this overlay again (full-screen path). */
+    val repeatable: Boolean = true,
+    /** Identifies the application and screen whose pixels these are; never a model snapshot id. */
+    var sourceKey: String? = null,
 )
 
 internal class ScreenShooter(private val service: AccessibilityService, private val overlay: ControlOverlay) {
@@ -48,9 +52,9 @@ internal class ScreenShooter(private val service: AccessibilityService, private 
      * [sensitiveBounds]) and draws [marks].
      */
     fun shoot(window: UiWindow?, screen: Box, marks: List<ScreenElement>, secrets: List<Box>, timeoutMs: Long): Shot {
-        // l10n:keep agent screenshot result
-        if (Build.VERSION.SDK_INT < 30) return Shot(null, null, null, false, "本机系统低于 Android 11，不支持无障碍截图")
         val useWindow = Build.VERSION.SDK_INT >= 34 && window != null
+        // l10n:keep agent screenshot result
+        if (Build.VERSION.SDK_INT < 30) return Shot(null, null, null, false, "本机系统低于 Android 11，不支持无障碍截图", repeatable = false)
         val raw = if (useWindow) capture(timeoutMs) { cb -> service.takeScreenshotOfWindow(window.id, executor, cb) }
         else {
             overlay.hideForCapture(true)
@@ -58,12 +62,12 @@ internal class ScreenShooter(private val service: AccessibilityService, private 
             finally { overlay.hideForCapture(false) }
         }
         // l10n:keep agent screenshot result
-        if (raw.secure) return Shot(null, null, null, true, "此页面禁止截图（安全窗口）")
+        if (raw.secure) return Shot(null, null, null, true, "此页面禁止截图（安全窗口）", repeatable = false)
         // l10n:keep agent screenshot result
-        val bitmap = raw.bitmap ?: return Shot(null, null, null, false, raw.error ?: "截图失败")
+        val bitmap = raw.bitmap ?: return Shot(null, null, null, false, raw.error ?: "截图失败", repeatable = useWindow)
         try {
             // l10n:keep agent screenshot result
-            if (looksBlack(bitmap)) return Shot(null, null, null, true, "截图全黑，可能是禁止截图的页面")
+            if (looksBlack(bitmap)) return Shot(null, null, null, true, "截图全黑，可能是禁止截图的页面", repeatable = false)
             val takenAt = raw.takenAtMillis
             val origin = if (useWindow) window.bounds else screen
             val factor = minOf(1f, 1300f / max(bitmap.width, bitmap.height))
@@ -81,7 +85,10 @@ internal class ScreenShooter(private val service: AccessibilityService, private 
                 draw(scaled, marks, secrets, origin, sx, sy)
                 val out = ByteArrayOutputStream()
                 scaled.compress(Bitmap.CompressFormat.JPEG, 80, out)
-                return Shot(out.toByteArray(), "image/jpeg", ImageGeometry(origin.left, origin.top, sx, sy, w, h), false, null, takenAt)
+                return Shot(
+                    out.toByteArray(), "image/jpeg", ImageGeometry(origin.left, origin.top, sx, sy, w, h),
+                    false, null, takenAt, repeatable = useWindow,
+                )
             } finally { scaled.recycle() }
         } finally { bitmap.recycle() }
     }

@@ -112,6 +112,18 @@ class FoldClockTest {
         assertEquals(1_000 + card, c.nextAt)
     }
 
+    @Test fun aVisiblePreviewKeepsTheCardOpenButStillAllowsAnExplicitCollapse() {
+        val c = open()
+        c.expand(0)
+        assertFalse(c.hold(Hold.PREVIEW, 10))
+        assertNull(c.nextAt)
+        assertEquals(Tick.NONE, c.tick(10 * card))
+        assertEquals(Form.CARD, c.form)
+        c.release(Hold.PREVIEW, 20)
+        assertTrue(c.collapse(30))
+        assertEquals(Form.CAPSULE, c.form)
+    }
+
     @Test fun aConfirmAStopOrAHandoffFoldTheCardBack() {
         for (h in FoldClock.COLLAPSING) {
             val c = open()

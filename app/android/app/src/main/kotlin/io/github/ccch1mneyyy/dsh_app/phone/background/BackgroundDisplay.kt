@@ -2,6 +2,8 @@ package io.github.ccch1mneyyy.dsh_app.phone.background
 
 import android.os.Build
 import android.os.Bundle
+import io.github.ccch1mneyyy.dsh_app.phone.a11y.ImageGeometry
+import io.github.ccch1mneyyy.dsh_app.phone.a11y.Shot
 import io.github.ccch1mneyyy.dsh_app.phone.ActionResult
 import io.github.ccch1mneyyy.dsh_app.phone.Availability
 import io.github.ccch1mneyyy.dsh_app.phone.CollectResult
@@ -57,7 +59,9 @@ class BackgroundDisplay(
         currentPackage = packageName
         val response = channel().execute(request)
         // l10n:keep agent screen protocol
-        return toResult(response, "已在后台屏打开")
+        val result = toResult(response, "已在后台屏打开")
+        if (result.ok) PhoneRegistry.previewSourceChanged?.invoke()
+        return result
     }
 
     override fun observe(detail: Boolean, image: Boolean): ScreenSnapshot {
@@ -70,6 +74,31 @@ class BackgroundDisplay(
             putBoolean(Proto.WANT_IMAGE, image)
         }
         return snapshot(channel().execute(request), markNew = false)
+    }
+
+    /** Human preview only: no snapshot id, element fingerprint or model observation is touched. */
+    internal fun preview(): Shot {
+        val pkg = currentPackage ?: return BackgroundPreview.shot(
+            "idle", null, null, 0, 0, secure = false, imageOmitted = false,
+        )
+        val spec = BackgroundPreview.request(pkg)
+        val request = Bundle().apply {
+            putString(Proto.OP, spec.op)
+            putString(Proto.OWNER, "task")
+            putString(Proto.PKG, spec.packageName)
+            putBoolean(Proto.DETAIL, spec.detail)
+            putBoolean(Proto.WANT_IMAGE, spec.wantImage)
+        }
+        val response = channel().execute(request)
+        return BackgroundPreview.shot(
+            packageName = response.getString(Proto.FG_PKG) ?: pkg,
+            bytes = response.getByteArray("imageBytes"),
+            mime = response.getString("imageMime"),
+            width = response.getInt(Proto.IMAGE_WIDTH),
+            height = response.getInt(Proto.IMAGE_HEIGHT),
+            secure = response.getBoolean(Proto.SECURE),
+            imageOmitted = response.getBoolean(Proto.IMAGE_OMITTED),
+        )
     }
 
     override fun collect(screenId: String, listElementId: Int, maxPages: Int, until: String?): CollectResult {
@@ -147,7 +176,9 @@ class BackgroundDisplay(
             is PhoneAction.TapXY -> return ActionResult(false, "后台屏按元素编号操作，不用坐标")
         }
         // l10n:keep agent screen protocol
-        return toResult(channel().execute(request), "已在后台屏执行")
+        val result = toResult(channel().execute(request), "已在后台屏执行")
+        if (result.ok) PhoneRegistry.previewRefresh?.invoke()
+        return result
     }
 
     override fun foregroundPackage(): String? = currentPackage
@@ -163,6 +194,7 @@ class BackgroundDisplay(
         lastScreenId = null
         lastElements = emptyList()
         previousLabels = emptySet()
+        PhoneRegistry.previewSourceChanged?.invoke()
     }
 
     private fun fingerprint(elementId: Int, request: Bundle) {
@@ -251,5 +283,45 @@ class BackgroundDisplay(
         lastScreenId = id; lastElements = emptyList()
         // l10n:keep agent screen protocol
         return ScreenSnapshot(id, "屏幕 $id · 后台屏 · 空闲，用 open 打开应用", null, null)
+    }
+}
+
+internal data class BackgroundPreviewRequest(
+    val op: String,
+    val packageName: String,
+    val detail: Boolean,
+    val wantImage: Boolean,
+)
+
+/** Pure response conversion keeps the preview path separate from BackgroundDisplay's model state. */
+internal object BackgroundPreview {
+    fun request(packageName: String) = BackgroundPreviewRequest(
+        Proto.OP_OBSERVE, packageName, detail = false, wantImage = true,
+    )
+
+    fun shot(
+        packageName: String,
+        bytes: ByteArray?,
+        mime: String?,
+        width: Int,
+        height: Int,
+        secure: Boolean,
+        imageOmitted: Boolean,
+    ): Shot {
+        val usable = !secure && !imageOmitted && bytes != null && bytes.isNotEmpty() && mime != null && width > 0 && height > 0
+        return Shot(
+            bytes = if (usable) bytes else null,
+            mime = if (usable) mime else null,
+            geometry = if (usable) ImageGeometry(0, 0, 1f, 1f, width, height) else null,
+            secure = secure,
+            error = when {
+                secure -> "secure window"
+                imageOmitted -> "image omitted"
+                !usable -> "preview unavailable"
+                else -> null
+            },
+            repeatable = usable,
+            sourceKey = "background:$packageName",
+        )
     }
 }

@@ -14,6 +14,7 @@
     <string name="overlay_fold">收成小球</string>
     <string name="overlay_fold_row">收成小球</string>
     <string name="overlay_hold_hint">按住小球 1 秒可直接停止</string>
+    <string name="overlay_preview_unavailable">暂时无法显示预览</string>
     <string name="overlay_stop_description">停止 DSH 的操作</string>
     <string name="overlay_paused_short">已暂停</string>
     <string name="overlay_waiting">等你在下方确认</string>

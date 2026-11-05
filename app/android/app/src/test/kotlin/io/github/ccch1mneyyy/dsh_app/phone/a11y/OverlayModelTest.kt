@@ -233,6 +233,24 @@ class OverlayModelTest {
         assertEquals(Release.NONE, h.up(10 * full))
     }
 
+    // ---- 展开卡片：宽屏左右 45:55，窄屏上下 ----------------------------------------------------------
+
+    @Test fun aWideCardUsesFixedPreviewAndBodyColumns() {
+        val layout = CapsuleMetrics.expandedCard(900, 900, 1f)
+        assertTrue(layout.sideBySide)
+        assertEquals(Math.round(layout.width * 0.45f), layout.previewWidth)
+        assertEquals(layout.width - layout.previewWidth, layout.bodyWidth)
+        assertEquals(layout.previewHeight, layout.contentHeight)
+    }
+
+    @Test fun aNarrowCardStacksThePreviewAboveTheOriginalBody() {
+        val layout = CapsuleMetrics.expandedCard(500, 900, 1f)
+        assertFalse(layout.sideBySide)
+        assertEquals(layout.width, layout.previewWidth)
+        assertEquals(layout.width, layout.bodyWidth)
+        assertEquals(layout.previewHeight + layout.bodyHeight, layout.contentHeight)
+    }
+
     // ---- 卡片列几步 -----------------------------------------------------------------------------------
 
     @Test fun aShortScreenListsOneStep() {
