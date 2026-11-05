@@ -14,7 +14,12 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ccch1mneyyy/dsh-go/releases/latest"><img alt="Android 8+" src="https://img.shields.io/badge/Android-8%2B-4B67B4?style=flat-square&logo=android&logoColor=white&labelColor=2B3245"></a>
+  <b>Personal fork</b><br>
+  <sub>This repository, <a href="https://github.com/nianyuechan/DSH-GO-ROOT">nianyuechan/DSH-GO-ROOT</a>, is a personal fork of <a href="https://github.com/ccch1mneyyy/dsh-go">ccch1mneyyy/dsh-go</a>, whose original author is <a href="https://github.com/ccch1mneyyy">ccch1mneyyy</a>. It is not an upstream release and does not imply affiliation with, support from, or endorsement by the upstream author or DeepSeek. Upstream currently accepts no external pull requests; see its <a href="CONTRIBUTING.en.md">contribution policy</a>.</sub>
+</p>
+
+<p align="center">
+  <a href="https://github.com/nianyuechan/DSH-GO-ROOT/releases/latest"><img alt="Android 8+" src="https://img.shields.io/badge/Android-8%2B-4B67B4?style=flat-square&logo=android&logoColor=white&labelColor=2B3245"></a>
   <a href="LICENSE"><img alt="License AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-4B67B4?style=flat-square&labelColor=2B3245"></a>
   <a href="https://forum.dshtui.com"><img alt="Forum" src="https://img.shields.io/badge/forum-forum.dshtui.com-4B67B4?style=flat-square&labelColor=2B3245"></a>
   <a href="https://qm.qq.com/q/OEy2RqZnqY"><img alt="QQ group 1132118290" src="https://img.shields.io/badge/QQ%20group-1132118290-4B67B4?style=flat-square&logo=tencentqq&logoColor=white&labelColor=2B3245"></a>
@@ -44,18 +49,18 @@
 <a id="download"></a>
 <h3 align="center">Download DSH Go</h3>
 
-<p align="center">Get the latest APK from GitHub Releases or the download page at go.dshtui.com. Most phones need the arm64 package.</p>
+<p align="center">Get an APK from this fork's GitHub Releases or the upstream download page at go.dshtui.com. Most phones need the arm64 package.</p>
 
 <p align="center">
-  <a href="https://github.com/ccch1mneyyy/dsh-go/releases/latest"><img alt="Download from GitHub Releases" src="https://img.shields.io/badge/GitHub%20Releases-Download%20APK-4B67B4?style=for-the-badge&logo=github&logoColor=white&labelColor=2B3245"></a>&emsp;<a href="https://go.dshtui.com/download"><img alt="Download from go.dshtui.com" src="https://img.shields.io/badge/go.dshtui.com-Download%20page-4B67B4?style=for-the-badge&labelColor=2B3245"></a>
+  <a href="https://github.com/nianyuechan/DSH-GO-ROOT/releases/latest"><img alt="Download from GitHub Releases" src="https://img.shields.io/badge/GitHub%20Releases-Download%20APK-4B67B4?style=for-the-badge&logo=github&logoColor=white&labelColor=2B3245"></a>&emsp;<a href="https://go.dshtui.com/download"><img alt="Download from go.dshtui.com" src="https://img.shields.io/badge/go.dshtui.com-Download%20page-4B67B4?style=for-the-badge&labelColor=2B3245"></a>
 </p>
 
 <p align="center">
-  <b>Thank you all for supporting and loving DSH Go! iOS and HarmonyOS versions are coming as soon as I can make them. The more stars, the faster they come, hehe</b>
+  <b>This fork's changes and releases are independent of upstream. Upstream's iOS and HarmonyOS plans are not release commitments of this fork.</b>
 </p>
 
 <p align="center">
-  <a href="https://github.com/ccch1mneyyy/dsh-go/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/ccch1mneyyy/dsh-go?style=flat-square&logo=github&label=Star&color=4B67B4&labelColor=2B3245"></a>
+  <a href="https://github.com/nianyuechan/DSH-GO-ROOT/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/nianyuechan/DSH-GO-ROOT?style=flat-square&logo=github&label=Star&color=4B67B4&labelColor=2B3245"></a>
 </p>
 
 <p align="center">
@@ -182,17 +187,28 @@ DSH Go combines a chat interface, an on-device runtime and remote connections. I
 
 Capabilities depend on the host and connection. DSHarness Remote currently accepts image attachments only, does not open the web interface inside the app, limits plugin management to enabling or disabling plugins, and does not support DS Bot or conversation-log export. See [Engine and remote hosts](docs/guide/en/03-engine-hosts.md).
 
+## Implemented differences in this fork
+
+Each item below is present in the current source; planned work is not listed as implemented.
+
+- **Root-chroot launch and privilege dropping:** optional and off by default; chroot into the real rootfs, then use `setpriv` to return to the app UID/GID while retaining supplementary groups including `AID_INET` (3003). See [RootLaunch.kt](app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/runtime/RootLaunch.kt).
+- **Engine adoption:** use `setsid` outside the chroot to detach from the app session. After an app restart, verify the rootfs, process identity, working directory, port and token before adopting a surviving engine. See [RootLaunch.kt](app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/runtime/RootLaunch.kt), [AdoptedEngine.kt](app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/runtime/AdoptedEngine.kt) and [EngineHandoff.kt](app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/runtime/EngineHandoff.kt).
+- **Root stop and timeout rollback:** target only recorded PIDs, using TERM, a bounded wait and KILL when necessary. The default stop timeout is 15 seconds; on timeout, STOPPING changes to a retryable ERROR. Clean up and check only this instance's recorded mount targets rather than unmounting globally. See [DshProcess.kt](app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/runtime/DshProcess.kt), [RuntimeController.kt](app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/runtime/RuntimeController.kt) and [RootLaunch.kt](app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/runtime/RootLaunch.kt).
+- **Root system tuning:** battery-whitelist and standby-bucket changes use read–write–readback verification. A readback that misses the target is reported as not applied instead of treating the write command's exit code as success. See [TuningCatalog.kt](app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/root/TuningCatalog.kt) and [SystemTuning.kt](app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/root/SystemTuning.kt).
+- **Local-network permission declaration:** declare Android 16's `ACCESS_LOCAL_NETWORK` for access to LAN model gateways. See [AndroidManifest.xml](app/android/app/src/main/AndroidManifest.xml).
+- **Accessibility overlay card:** use preview-left/content-right on wide screens and a stacked layout on narrow screens. While expanded, capture previews at about 1 fps (1100 ms intervals), allow at most one frame in flight, refresh after actions and show tap ripples. See [OverlayCapsule.kt](app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/phone/a11y/OverlayCapsule.kt), [PreviewLoop.kt](app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/phone/a11y/PreviewLoop.kt), [OverlayPreview.kt](app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/phone/a11y/OverlayPreview.kt) and [ControlOverlay.kt](app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/phone/a11y/ControlOverlay.kt).
+
 ## Install
 
 Installation requires Android 8.0 (API 26) or later. The **arm64** package on the Releases page is for typical 64-bit Android phones; the x64 package for x86_64 devices and emulators is under “Other builds” at the end of the release notes. This repository has no 32-bit ARM build.
 
-1. Download the APK for your device architecture from [GitHub Releases](https://github.com/ccch1mneyyy/dsh-go/releases/latest) or the [download page](https://go.dshtui.com/download), and follow Android's prompt to allow that installation source.
+1. Download the APK for your device architecture from this fork's [GitHub Releases](https://github.com/nianyuechan/DSH-GO-ROOT/releases/latest) or the [upstream download page](https://go.dshtui.com/download), and follow Android's prompt to allow that installation source. Upstream packages do not include this fork's differences.
 2. On first launch, choose an on-device runtime or a remote host.
 3. Configure a model and its credentials for the selected host, then start a conversation. Some remote providers must be configured on the host itself.
 
 A remote-only setup does not need a local runtime on the phone. Phone control works with the local engine outside safe mode and requires permissions such as Accessibility, as explained in the app. Non-disruptive mode additionally requires Android 14 or later and Shizuku or self-ADB. Follow the [user guide](docs/guide/README.md) for setup.
 
-The local engine uses compatible PRoot startup by default. Direct startup is off by default in Developer options; see [Troubleshooting](docs/guide/en/11-faq.md) for compatibility and fallback behavior. The current Android build targets APK sideloading, not Google Play distribution.
+The local engine uses compatible PRoot startup by default. Both direct startup and this fork's root-chroot startup are off by default in Developer options. See [Troubleshooting](docs/guide/en/11-faq.md) for direct-startup compatibility and fallback behavior, and [Implemented differences in this fork](#implemented-differences-in-this-fork) for the root-chroot implementation. The current Android build targets APK sideloading, not Google Play distribution.
 
 ## Data and permissions
 
@@ -254,13 +270,15 @@ Yes. The code is in this repository under [AGPL-3.0](LICENSE); `sdk/` and `examp
 
 ## Build from source
 
-The following workflow targets **Linux x86_64**. The toolchain script currently defaults to JDK 17, Flutter 3.47.7 and the Android SDK/NDK. The app requires Dart `^3.13.5`. Prepare Bash, Git, curl, tar, unzip, xz, Python 3, zstd (for unpacking zstd-compressed deb archives when Python does not provide `compression.zstd`), file and standard GNU utilities. Resolving Ubuntu package locks again also requires gpgv.
+This fork supports the following build workflow only on **WSL2 Linux x86_64**; native Windows Flutter is not supported. The toolchain script currently defaults to JDK 17, Flutter 3.47.7 and the Android SDK/NDK. The app requires Dart `^3.13.5`. Prepare Bash, Git, curl, tar, unzip, xz, Python 3, zstd (for unpacking zstd-compressed deb archives when Python does not provide `compression.zstd`), file and standard GNU utilities. Resolving Ubuntu package locks again also requires gpgv.
+
+The current [app/pubspec.yaml](app/pubspec.yaml) declares `version: 1.0.10+1`. The [APK build script](tooling/build-apk.sh) reads `1.0.10` as versionName; `+1` is only a placeholder. The final versionCode is generated from the build minute by [build_number.py](tooling/build_number.py) unless explicitly overridden.
 
 Start with the complete source tree and project assets. Fonts, images and other files declared in `app/pubspec.yaml` are build inputs. The following script generates the runtime bundle.
 
 ```bash
-git clone https://github.com/ccch1mneyyy/dsh-go.git
-cd dsh-go
+git clone https://github.com/nianyuechan/DSH-GO-ROOT.git
+cd DSH-GO-ROOT
 
 bash tooling/setup-toolchain.sh
 source tooling/env.sh
@@ -290,6 +308,12 @@ To inspect APK build commands without building:
 DSH_BETA_TOKEN_FILE= bash tooling/build-apk.sh --dry-run -f all
 ```
 
+Run the Android JVM unit tests separately without building an APK or using a device:
+
+```bash
+(cd app/android && ./gradlew :app:testX64DebugUnitTest)
+```
+
 ## Repository layout
 
 | Path | Contents |
@@ -307,13 +331,15 @@ DSH_BETA_TOKEN_FILE= bash tooling/build-apk.sh --dry-run -f all
 
 ## Contribute
 
-Report bugs and suggest improvements in [Issues](https://github.com/ccch1mneyyy/dsh-go/issues). For code, documentation and translation changes, start with [CONTRIBUTING.en.md](CONTRIBUTING.en.md). Plugin authors can use the [plugin guides](docs/plugins/en/README.md) and [SDK](sdk/plugin-kit/README.en.md).
+Report bugs and suggest improvements for this fork in this repository's [Issues](https://github.com/nianyuechan/DSH-GO-ROOT/issues), not upstream. For code, documentation and translation changes, start with [CONTRIBUTING.en.md](CONTRIBUTING.en.md), which retains upstream's policy of accepting no external pull requests. Plugin authors can use the [plugin guides](docs/plugins/en/README.md) and [SDK](sdk/plugin-kit/README.en.md).
 
 Report security issues through [SECURITY.en.md](SECURITY.en.md). Keep vulnerability details and credentials out of public issues.
 
 <a id="community"></a>
 
 ## Community
+
+These are upstream communities, not dedicated support channels for this fork.
 
 - **Forum**: [forum.dshtui.com](https://forum.dshtui.com)
 - **QQ group**: `1132118290` ([join](https://qm.qq.com/q/OEy2RqZnqY))

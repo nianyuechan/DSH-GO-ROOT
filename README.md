@@ -14,7 +14,12 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ccch1mneyyy/dsh-go/releases/latest"><img alt="Android 8+" src="https://img.shields.io/badge/Android-8%2B-4B67B4?style=flat-square&logo=android&logoColor=white&labelColor=2B3245"></a>
+  <b>个人 fork</b><br>
+  <sub>本仓库 <a href="https://github.com/nianyuechan/DSH-GO-ROOT">nianyuechan/DSH-GO-ROOT</a> 是 <a href="https://github.com/ccch1mneyyy/dsh-go">ccch1mneyyy/dsh-go</a> 的个人 fork，上游原作者为 <a href="https://github.com/ccch1mneyyy">ccch1mneyyy</a>。本 fork 不是上游发布版本，不代表与上游作者或 DeepSeek 存在关联、支持或背书。上游目前不接受任何外部 PR，见<a href="CONTRIBUTING.md">贡献说明</a>。</sub>
+</p>
+
+<p align="center">
+  <a href="https://github.com/nianyuechan/DSH-GO-ROOT/releases/latest"><img alt="Android 8+" src="https://img.shields.io/badge/Android-8%2B-4B67B4?style=flat-square&logo=android&logoColor=white&labelColor=2B3245"></a>
   <a href="LICENSE"><img alt="许可证 AGPL-3.0" src="https://img.shields.io/badge/%E8%AE%B8%E5%8F%AF%E8%AF%81-AGPL--3.0-4B67B4?style=flat-square&labelColor=2B3245"></a>
   <a href="https://forum.dshtui.com"><img alt="论坛" src="https://img.shields.io/badge/%E8%AE%BA%E5%9D%9B-forum.dshtui.com-4B67B4?style=flat-square&labelColor=2B3245"></a>
   <a href="https://qm.qq.com/q/OEy2RqZnqY"><img alt="QQ 群 1132118290" src="https://img.shields.io/badge/QQ%20%E7%BE%A4-1132118290-4B67B4?style=flat-square&logo=tencentqq&logoColor=white&labelColor=2B3245"></a>
@@ -44,18 +49,18 @@
 <a id="download"></a>
 <h3 align="center">下载 DSH Go</h3>
 
-<p align="center">从 GitHub Releases 或官网下载页获取最新版 APK，常见手机选 arm64 包。</p>
+<p align="center">从本 fork 的 GitHub Releases 或上游官网下载页获取 APK，常见手机选 arm64 包。</p>
 
 <p align="center">
-  <a href="https://github.com/ccch1mneyyy/dsh-go/releases/latest"><img alt="从 GitHub Releases 下载" src="https://img.shields.io/badge/GitHub%20Releases-%E4%B8%8B%E8%BD%BD%20APK-4B67B4?style=for-the-badge&logo=github&logoColor=white&labelColor=2B3245"></a>&emsp;<a href="https://go.dshtui.com/download"><img alt="从官网下载页下载" src="https://img.shields.io/badge/go.dshtui.com-%E5%AE%98%E7%BD%91%E4%B8%8B%E8%BD%BD-4B67B4?style=for-the-badge&labelColor=2B3245"></a>
+  <a href="https://github.com/nianyuechan/DSH-GO-ROOT/releases/latest"><img alt="从 GitHub Releases 下载" src="https://img.shields.io/badge/GitHub%20Releases-%E4%B8%8B%E8%BD%BD%20APK-4B67B4?style=for-the-badge&logo=github&logoColor=white&labelColor=2B3245"></a>&emsp;<a href="https://go.dshtui.com/download"><img alt="从官网下载页下载" src="https://img.shields.io/badge/go.dshtui.com-%E5%AE%98%E7%BD%91%E4%B8%8B%E8%BD%BD-4B67B4?style=for-the-badge&labelColor=2B3245"></a>
 </p>
 
 <p align="center">
-  <b>感谢大家对 DSH Go 的支持和喜爱，我将尽快适配 iOS 和鸿蒙！大家 Star 点得越多，我适配得越快哦 hhh</b>
+  <b>本 fork 的修改与发布独立于上游；上游的 iOS 和鸿蒙适配计划不属于本 fork 的发布承诺。</b>
 </p>
 
 <p align="center">
-  <a href="https://github.com/ccch1mneyyy/dsh-go/stargazers"><img alt="GitHub Star 数" src="https://img.shields.io/github/stars/ccch1mneyyy/dsh-go?style=flat-square&logo=github&label=Star&color=4B67B4&labelColor=2B3245"></a>
+  <a href="https://github.com/nianyuechan/DSH-GO-ROOT/stargazers"><img alt="GitHub Star 数" src="https://img.shields.io/github/stars/nianyuechan/DSH-GO-ROOT?style=flat-square&logo=github&label=Star&color=4B67B4&labelColor=2B3245"></a>
 </p>
 
 <p align="center">
@@ -182,17 +187,28 @@ DSH Go 提供聊天界面、本机运行环境和远程连接，是基于 [DeepS
 
 功能随主机和连接方式不同。DSHarness Remote 当前只支持图片附件，不能在 App 内打开网页版，插件管理限于开关，且不支持 DS Bot 和对话日志导出。详见[本机引擎与远程主机](docs/guide/zh/03-engine-hosts.md)。
 
+## 本 fork 已实现的差异
+
+以下项目均已对应当前源码；计划中的功能不列为已实现。
+
+- **Root-chroot 启动与降权**：可选且默认关闭；通过 chroot 使用真实 rootfs，并以 `setpriv` 切回 App UID/GID，保留 `AID_INET`（3003）等补充组。见 [RootLaunch.kt](app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/runtime/RootLaunch.kt)。
+- **引擎收养**：在 chroot 外通过 `setsid` 脱离 App 会话；App 重启后，按 rootfs、进程身份、工作目录、端口和 token 校验并收养仍存活的引擎。见 [RootLaunch.kt](app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/runtime/RootLaunch.kt)、[AdoptedEngine.kt](app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/runtime/AdoptedEngine.kt) 和 [EngineHandoff.kt](app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/runtime/EngineHandoff.kt)。
+- **Root 停止与超时回滚**：只定向处理已记录的 PID，依次执行 TERM、有界等待和必要的 KILL；默认停止超时为 15 秒，超时后从 STOPPING 转为可重试的 ERROR。挂载按本实例记录的目标清理并检查残留，不做全局卸载。见 [DshProcess.kt](app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/runtime/DshProcess.kt)、[RuntimeController.kt](app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/runtime/RuntimeController.kt) 和 [RootLaunch.kt](app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/runtime/RootLaunch.kt)。
+- **Root 系统调优**：电池白名单与待机桶采用读—写—读回校验；读回未达到目标会报告未生效，不只凭写入命令的退出码判定成功。见 [TuningCatalog.kt](app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/root/TuningCatalog.kt) 和 [SystemTuning.kt](app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/root/SystemTuning.kt)。
+- **局域网权限声明**：声明 Android 16 的 `ACCESS_LOCAL_NETWORK`，用于访问局域网模型网关。见 [AndroidManifest.xml](app/android/app/src/main/AndroidManifest.xml)。
+- **无障碍悬浮卡片**：宽屏采用左预览、右内容，窄屏采用上下布局；展开时以约 1 fps（1100 ms 间隔）捕获预览，最多一帧在途，动作后刷新，并显示点击涟漪。见 [OverlayCapsule.kt](app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/phone/a11y/OverlayCapsule.kt)、[PreviewLoop.kt](app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/phone/a11y/PreviewLoop.kt)、[OverlayPreview.kt](app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/phone/a11y/OverlayPreview.kt) 和 [ControlOverlay.kt](app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/phone/a11y/ControlOverlay.kt)。
+
 ## 安装
 
 安装要求为 Android 8.0（API 26）及以上。Release 页面上的 **arm64** 安装包适用于常见的 64 位 Android 手机；x86_64 设备和模拟器用的 x64 包在发布说明末尾的「其他版本下载」里。仓库没有 32 位 ARM 构建。
 
-1. 从 [GitHub Releases](https://github.com/ccch1mneyyy/dsh-go/releases/latest) 或[官网下载页](https://go.dshtui.com/download)下载对应架构的 APK，并按系统提示允许该安装来源。
+1. 从本 fork 的 [GitHub Releases](https://github.com/nianyuechan/DSH-GO-ROOT/releases/latest) 或[上游官网下载页](https://go.dshtui.com/download)下载对应架构的 APK，并按系统提示允许该安装来源。上游包不包含本 fork 的差异。
 2. 首次启动时，选择在本机安装运行环境，或连接远程主机。
 3. 为所选主机配置模型和所需凭据，再开始对话；部分远程渠道需要在主机侧配置。
 
 仅连接远程主机时，不必在手机上安装本机运行环境。手机操控只对正常模式下的本机引擎开放，需要按界面说明开启无障碍等权限；不打扰模式另外要求 Android 14 及以上，以及 Shizuku 或自连 ADB。首次使用可按[使用指南](docs/guide/README.md)逐项配置。
 
-本地引擎默认使用 PRoot 兼容启动。开发者选项中的直接启动默认关闭，开启后的兼容性和回退方式见[常见问题](docs/guide/zh/11-faq.md)。当前 Android 构建以 APK 侧载为目标，不是 Google Play 发布配置。
+本地引擎默认使用 PRoot 兼容启动。开发者选项中的直接启动与本 fork 的 root-chroot 启动均默认关闭；直接启动的兼容性和回退方式见[常见问题](docs/guide/zh/11-faq.md)，root-chroot 的实现见[本 fork 已实现的差异](#本-fork-已实现的差异)。当前 Android 构建以 APK 侧载为目标，不是 Google Play 发布配置。
 
 ## 数据与权限
 
@@ -254,13 +270,15 @@ Android 8 及以上。手机直接下载 Release 页面上的安装包即可，�
 
 ## 从源码构建
 
-以下流程面向 **Linux x86_64**。当前工具链脚本默认安装 JDK 17、Flutter 3.47.7 和 Android SDK/NDK；App 要求 Dart `^3.13.5`。准备 Bash、Git、curl、tar、unzip、xz、Python 3、zstd（Python 未提供 `compression.zstd` 时用于解包 zstd 压缩的 deb）、file 和常见 GNU 命令；重新解析 Ubuntu 软件包锁时还需要 gpgv。
+本 fork 仅在 **WSL2 Linux x86_64** 下支持以下构建流程；Windows 本机 Flutter 不在支持范围内。当前工具链脚本默认安装 JDK 17、Flutter 3.47.7 和 Android SDK/NDK；App 要求 Dart `^3.13.5`。准备 Bash、Git、curl、tar、unzip、xz、Python 3、zstd（Python 未提供 `compression.zstd` 时用于解包 zstd 压缩的 deb）、file 和常见 GNU 命令；重新解析 Ubuntu 软件包锁时还需要 gpgv。
+
+当前 [app/pubspec.yaml](app/pubspec.yaml) 声明 `version: 1.0.10+1`。[APK 构建脚本](tooling/build-apk.sh)读取其中的 `1.0.10` 作为 versionName，`+1` 只是占位符；最终 versionCode 默认由 [build_number.py](tooling/build_number.py) 按构建分钟生成。
 
 先取得完整源码和项目资源。`app/pubspec.yaml` 声明的字体、图片等都是构建输入，运行时包由下面的脚本生成。
 
 ```bash
-git clone https://github.com/ccch1mneyyy/dsh-go.git
-cd dsh-go
+git clone https://github.com/nianyuechan/DSH-GO-ROOT.git
+cd DSH-GO-ROOT
 
 bash tooling/setup-toolchain.sh
 source tooling/env.sh
@@ -290,6 +308,12 @@ DSH_BETA_TOKEN_FILE= bash tooling/build-apk.sh -f x64 --keep-daemon
 DSH_BETA_TOKEN_FILE= bash tooling/build-apk.sh --dry-run -f all
 ```
 
+Android JVM 单元测试可单独运行，不构建 APK，也不操作设备：
+
+```bash
+(cd app/android && ./gradlew :app:testX64DebugUnitTest)
+```
+
 ## 目录
 
 | 路径 | 内容 |
@@ -307,13 +331,15 @@ DSH_BETA_TOKEN_FILE= bash tooling/build-apk.sh --dry-run -f all
 
 ## 参与贡献
 
-问题反馈和改进建议可提交到 [Issues](https://github.com/ccch1mneyyy/dsh-go/issues)。代码、文档和翻译贡献请先看 [CONTRIBUTING.md](CONTRIBUTING.md)。插件作者可以从[插件教程](docs/plugins/README.md)和 [SDK](sdk/plugin-kit/README.md)开始。
+本 fork 的问题反馈和改进建议请提交到本仓库 [Issues](https://github.com/nianyuechan/DSH-GO-ROOT/issues)，不要提交到上游。代码、文档和翻译改动请先看 [CONTRIBUTING.md](CONTRIBUTING.md)；其中保留了上游不接受任何外部 PR 的政策。插件作者可以从[插件教程](docs/plugins/README.md)和 [SDK](sdk/plugin-kit/README.md)开始。
 
 安全问题请按 [SECURITY.md](SECURITY.md) 报告，避免在公开 Issue 中提交漏洞细节或凭据。
 
 <a id="community"></a>
 
 ## 社区
+
+以下为上游社区，不是本 fork 的专属支持渠道。
 
 - **论坛**：[forum.dshtui.com](https://forum.dshtui.com)
 - **QQ 群**：`1132118290`（[点此加群](https://qm.qq.com/q/OEy2RqZnqY)）
